@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: xoso_bot
+    plan: free
+    env: docker
+    dockerfilePath: ./Dockerfile
