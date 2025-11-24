@@ -1,10 +1,17 @@
-FROM python:3.10
+# Sử dụng Python 3.10
+FROM python:3.10-slim
 
+# Tạo thư mục làm việc
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+# Copy toàn bộ code vào container
+COPY . /app
 
-COPY . .
+# Cài dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["bash", "start.sh"]
+# Expose port cho Flask
+EXPOSE 5000
+
+# Chạy bot
+CMD ["python3", "bot_tele.py"]
