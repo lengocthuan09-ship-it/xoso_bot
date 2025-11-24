@@ -28,7 +28,7 @@ from xoso_core import (
 # CONFIG
 # =============================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-BASE_URL = os.getenv("BASE_URL")  # https://xoso-bot.onrender.com
+BASE_URL = os.getenv("BASE_URL")   # ví dụ: https://xoso-bot.onrender.com
 WEBHOOK_URL = f"{BASE_URL}/{BOT_TOKEN}"
 
 AUTO_CHAT_ID = 0
@@ -36,18 +36,17 @@ WAITING_INPUT = {}
 LAST_SELECTED_DAI = {}
 
 # =============================
-# AUTO SCHEDULER
+# AUTO DAILY TASK
 # =============================
 def auto_scheduler():
     while True:
         now = datetime.now()
-
         run = now.replace(hour=16, minute=35, second=0, microsecond=0)
         if now >= run:
             run += timedelta(days=1)
 
         wait = (run - now).total_seconds()
-        print(f"⏳ Chờ đến {run} để auto…")
+        print(f"⏳ Chờ tới {run} để chạy auto…")
         time.sleep(wait)
 
         msg = "📅 Auto dự đoán:\n\n"
@@ -60,11 +59,12 @@ def auto_scheduler():
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
                 json={"chat_id": AUTO_CHAT_ID, "text": msg},
             )
+
         backup_data()
         print("✔ Auto xong 1 lượt.")
 
 # =============================
-# UI & LOGIC (GIỮ NGUYÊN)
+# UI / BUTTON
 # =============================
 def menu_keyboard():
     return InlineKeyboardMarkup([
@@ -94,9 +94,7 @@ def format_prediction(dai, preds):
 
     if not preds or (len(preds) == 1 and "Chưa có dữ liệu" in preds[0]):
         return (
-            f"🎯 {name}:\n"
-            f"⚠ Chưa đủ dữ liệu!\n\n"
-            f"👉 Nhập 18 số dạng 00 11 22 ..."
+            f"🎯 {name}:\n⚠ Chưa đủ dữ liệu!\n\n👉 Nhập 18 số dạng 00 11 22 ..."
         )
 
     line1 = " – ".join(preds[:6])
@@ -104,13 +102,13 @@ def format_prediction(dai, preds):
     all_nums = " ".join(preds)
 
     return (
-        f"🎯 Dự đoán 12 lô – {DAI_MAP[dai]}\n\n"
+        f"🎯 Dự đoán 12 lô – {name}\n\n"
         f"➡ {line1}\n➡ {line2}\n\n"
         f"{all_nums}"
     )
 
 # =============================
-# HANDLERS (GIỮ NGUYÊN)
+# HANDLERS
 # =============================
 async def start(update, context):
     await update.message.reply_text("🤖 Bot đã sẵn sàng!\n👉 Nhấn /menu")
@@ -195,33 +193,33 @@ async def handle_input(update, context):
     )
 
 # =============================
-# MAIN – WEBHOOK SERVER CHUẨN PTB
+# MAIN WEBOOK SERVER (CHUẨN RENDER)
 # =============================
 async def main():
     app = (
         Application.builder()
         .token(BOT_TOKEN)
-        .concurrent_updates(True)
         .build()
     )
 
+    # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_cmd))
     app.add_handler(CallbackQueryHandler(menu_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
 
-    # AUTO THREAD
+    # Auto thread
     threading.Thread(target=auto_scheduler, daemon=True).start()
 
-    print("🚀 Setting webhook:", WEBHOOK_URL)
+    print("🚀 Set webhook:", WEBHOOK_URL)
+    await app.bot.delete_webhook()
     await app.bot.set_webhook(WEBHOOK_URL)
 
-    print("🚀 Starting webhook server")
+    print("🚀 Webhook server listening...")
     await app.run_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 10000)),
         url_path=BOT_TOKEN,
-        webhook_url=WEBHOOK_URL,
     )
 
 if __name__ == "__main__":
