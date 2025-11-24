@@ -7,5 +7,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# CHẠY ĐÚNG FILE bot_tele_fix.py !!!
-CMD ["python3", "bot_tele_fix.py"]
+CMD ["python3", "bot_tele.py"]
