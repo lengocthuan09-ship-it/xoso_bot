@@ -7,4 +7,4 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
-CMD ["python", "bot_tele.py"]
+CMD ["bash", "start.sh"]
