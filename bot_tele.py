@@ -29,7 +29,7 @@ from xoso_core import (
 # CONFIG
 # ============================
 
-BOT_TOKEN = "8502101079:AAGt86vepiP_3iDEA_e4wYeZqaNkTHhD3ew"
+BOT_TOKEN = "8502101079:AAF7Ba9k6Z4sA4TWdWhOydpmOH6SgL9WVAA"
 AUTO_CHAT_ID = 0
 
 WAITING_INPUT = {}
@@ -313,4 +313,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
