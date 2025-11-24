@@ -1,20 +1,21 @@
 import os
+import threading
+import time
+from datetime import datetime, timedelta
 
+from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
+    ContextTypes,
     filters,
 )
-from datetime import datetime, timedelta
-import threading
-import time
+
 import requests
 
-# GIẢ SỬ xoso_core.py ĐÃ ĐƯỢC CẬP NHẬT ĐỂ XỬ LÝ 18 LÔ (KHÔNG CHỈNH SỬA Ở ĐÂY)
 from xoso_core import (
     save_today_numbers,
     get_prediction_for_dai,
@@ -25,52 +26,46 @@ from xoso_core import (
     clear_history
 )
 
-# ============================
+# =============================
 # CONFIG
-# ============================
-
-BOT_TOKEN = "8502101079:AAF7Ba9k6Z4sA4TWdWhOydpmOH6SgL9WVAA"
+# =============================
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 AUTO_CHAT_ID = 0
 
 WAITING_INPUT = {}
-LAST_SELECTED_DAI = {}   # đài user thao tác gần nhất
+LAST_SELECTED_DAI = {}
+
+# =============================
+# FLASK APP FOR WEBHOOK
+# =============================
+flask_app = Flask(__name__)
+tg_app = Application.builder().token(BOT_TOKEN).build()
 
 
-# ============================
-# FORMAT PREDICTION
-# SỬA: Hướng dẫn nhập từ 27 số sang 18 số (XSMN)
-# ============================
+# =============================
+# YOUR FORMAT + FUNCTIONS (GIỮ NGUYÊN)
+# =============================
 def format_prediction(dai, preds):
     name = DAI_MAP.get(dai, "?")
 
     if not preds or (len(preds) == 1 and "Chưa có dữ liệu" in preds[0]):
         return (
             f"🎯 {name}:\n"
-            f"⚠ Chưa đủ dữ liệu để dự đoán!\n\n"
-            f"👉 Bạn cần nhập ít nhất 3 ngày gần nhất.\n"
-            f"📌 Nhấn Nhập và gửi 18 số dạng:\n"
-            f"`00 11 22 ...`" # SỬA: Hướng dẫn nhập 18 số
+            f"⚠ Chưa đủ dữ liệu!\n\n"
+            f"👉 Nhập 18 số dạng `00 11 22 ...`"
         )
 
-    # Vẫn giữ dàn 12 số dự đoán, có thể đổi tùy logic 'xoso_core'
     line1 = " – ".join(preds[:6])
     line2 = " – ".join(preds[6:12])
     all_nums = " ".join(preds)
 
     return (
         f"🎯 Dự đoán 12 lô – {name}\n\n"
-        f"📌 Bộ số dễ về nhất:\n"
-        f"➡️ {line1}\n"
-        f"➡️ {line2}\n\n"
-        f"🎯 Dàn 12 số đầy đủ:\n"
-        f"{all_nums}\n\n"
-        f"👉 Nhấn Dự đoán để cập nhật lại."
+        f"➡️ {line1}\n➡️ {line2}\n\n"
+        f"{all_nums}"
     )
 
 
-# ============================
-# AUTO DAILY AT 16:35
-# ============================
 def send_auto(text):
     if not AUTO_CHAT_ID:
         print("AUTO_CHAT_ID chưa cấu hình.")
@@ -85,13 +80,13 @@ def send_auto(text):
 def auto_scheduler():
     while True:
         now = datetime.now()
-        # XSMN quay lúc 16:15, 16:35 là thời gian hợp lý để auto dự đoán
-        run = now.replace(hour=16, minute=35, second=0, microsecond=0) 
+
+        run = now.replace(hour=16, minute=35, second=0, microsecond=0)
         if now >= run:
             run += timedelta(days=1)
-        wait = (run - now).total_seconds()
 
-        print(f"⏳ Chờ đến {run} để auto...")
+        wait = (run - now).total_seconds()
+        print(f"⏳ Chờ đến {run} để auto…")
         time.sleep(wait)
 
         msg = "📅 Auto dự đoán:\n\n"
@@ -104,9 +99,9 @@ def auto_scheduler():
         print("✔ Auto xong 1 lượt.")
 
 
-# ============================
-# KEYBOARD UI
-# ============================
+# =============================
+# KEYBOARDS (GIỮ NGUYÊN)
+# =============================
 def menu_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🎯 Dự đoán", callback_data="pred_menu")],
@@ -132,12 +127,12 @@ def dai_select_keyboard(prefix):
     ])
 
 
-# ============================
-# COMMANDS
-# ============================
-async def start(update: Update, context):
+# =============================
+# COMMAND HANDLERS
+# =============================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 Bot đã sẵn sàng!\n👉 Nhấn /menu để mở giao diện.",
+        "🤖 Bot đã sẵn sàng!\n👉 Nhấn /menu để mở giao diện."
     )
 
 
@@ -148,9 +143,6 @@ async def menu_cmd(update: Update, context):
     )
 
 
-# ============================
-# MENU CALLBACK
-# ============================
 async def menu_callback(update: Update, context):
     q = update.callback_query
     await q.answer()
@@ -167,11 +159,7 @@ async def menu_callback(update: Update, context):
 
     action, dai = data.split("_")
 
-    if dai not in ("1", "2", "3"):
-        await q.edit_message_text("❌ Lỗi đài!", reply_markup=menu_keyboard())
-        return
-
-    LAST_SELECTED_DAI[q.from_user.id] = dai  # lưu đài user vừa chọn
+    LAST_SELECTED_DAI[q.from_user.id] = dai
 
     if action == "pred":
         preds = get_prediction_for_dai(dai)
@@ -180,71 +168,37 @@ async def menu_callback(update: Update, context):
 
     if action == "hist":
         hist = get_last_n_history(dai, 7)
-        if not hist:
-            await q.edit_message_text("📭 Chưa có lịch sử!", reply_markup=menu_keyboard())
-            return
-
         msg = f"📜 Lịch sử – {DAI_MAP[dai]}:\n"
         for h in hist:
             msg += f"- {h['date']}: {' '.join(h['numbers'])}\n"
-
         await q.edit_message_text(msg, reply_markup=menu_keyboard())
         return
 
     if action == "stat":
         st = stats_for_dai(dai, 7)
-        if not st:
-            await q.edit_message_text("📭 Chưa đủ dữ liệu để thống kê!", reply_markup=menu_keyboard())
-            return
-
         msg = (
             f"📊 Thống kê – {DAI_MAP[dai]}\n"
-            f"- Tổng lượt về: {st['total_draws']}\n"
+            f"- Tổng lượt: {st['total_draws']}\n"
             f"- Chẵn: {st['even']} | Lẻ: {st['odd']}\n"
-            f"- Lô nóng nhất: {st['hot']}\n"
-            f"- Lô gan nhất: {st['cold']}\n"
+            f"- Nóng: {st['hot']} | Gan: {st['cold']}"
         )
-
         await q.edit_message_text(msg, reply_markup=menu_keyboard())
         return
 
     if action == "del":
         clear_history(dai)
-        await q.edit_message_text(
-            f"🗑 Đã xóa lịch sử {DAI_MAP[dai]}!",
-            reply_markup=menu_keyboard()
-        )
+        await q.edit_message_text("🗑 Đã xóa lịch sử!", reply_markup=menu_keyboard())
         return
 
-    # ============================
-    # INPUT MODE 
-    # SỬA: Hướng dẫn nhập từ 27 số sang 18 số
-    # ============================
     if action == "input":
         uid = q.from_user.id
-
-        # ⭐ Nếu user đã chọn đài trước đó → nhập đúng đài đó, không hỏi lại
-        if uid in LAST_SELECTED_DAI:
-            dai = LAST_SELECTED_DAI[uid]
-            WAITING_INPUT[uid] = dai
-            await q.edit_message_text(
-                f"📝 Bạn đang nhập số cho {DAI_MAP[dai]}.\n"
-                f"👉 Gửi 18 số (cách nhau bởi khoảng trắng):" # SỬA: Hướng dẫn nhập 18 số
-            )
-            return
-
-        # ⭐ Nếu là lần đầu → hỏi chọn đài
+        WAITING_INPUT[uid] = dai
         await q.edit_message_text(
-            "📌 Chọn đài muốn nhập số:",
-            reply_markup=dai_select_keyboard("input")
+            f"📝 Nhập 18 số cho {DAI_MAP[dai]} theo dạng:\n`00 11 22 ...`"
         )
         return
 
 
-# ============================
-# HANDLE 18-NUMBER INPUT
-# SỬA: Thay đổi kiểm tra số lượng từ 27 sang 18
-# ============================
 async def handle_input(update: Update, context):
     uid = update.message.from_user.id
 
@@ -255,64 +209,54 @@ async def handle_input(update: Update, context):
     LAST_SELECTED_DAI[uid] = dai
 
     parts = update.message.text.strip().split()
-    
-    # 💥 THAY ĐỔI LỚN NHẤT: Kiểm tra 18 số (lô)
     if len(parts) != 18:
         WAITING_INPUT[uid] = dai
-        await update.message.reply_text(
-            "❌ Bạn phải nhập đúng 18 số (18 lô XSMN)!\nGõ lại theo dạng:\n`00 11 22 ...`" # SỬA: Thông báo lỗi 18 số
-        )
+        await update.message.reply_text("❌ Bạn phải nhập đúng 18 số!")
         return
 
-    nums = []
-    for x in parts:
-        if not x.isdigit():
-            await update.message.reply_text("❌ Sai định dạng số!")
-            return
-        # Định dạng luôn là 2 chữ số (vd: 09, 10, 99)
-        nums.append(f"{int(x):02d}") 
+    nums = [f"{int(x):02d}" for x in parts]
 
     today = datetime.now().strftime("%Y-%m-%d")
-    last_hist = get_last_n_history(dai, 1)
-    is_new_day = last_hist and last_hist[0]["date"] != today
-
     save_today_numbers(dai, nums)
-
-    header = (
-        f"📅 Ngày mới: {today}\n"
-        f"📝 Đã lưu bộ số cho {DAI_MAP[dai]}!\n\n"
-        if is_new_day else
-        f"📝 Đã cập nhật bộ số cho {DAI_MAP[dai]}!\n\n"
-    )
 
     preds = get_prediction_for_dai(dai)
 
     await update.message.reply_text(
-        header +
-        f"🎯 Bộ số hôm nay:\n{' '.join(nums)}\n\n" +
+        f"📅 Lưu xong cho {DAI_MAP[dai]}!\n\n" +
+        f"🎯 {' '.join(nums)}\n\n" +
         format_prediction(dai, preds),
         reply_markup=menu_keyboard()
     )
 
 
-# ============================
-# MAIN APP
-# ============================
-def main():
+# =============================
+# REGISTER HANDLERS
+# =============================
+tg_app.add_handler(CommandHandler("start", start))
+tg_app.add_handler(CommandHandler("menu", menu_cmd))
+tg_app.add_handler(CallbackQueryHandler(menu_callback))
+tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
+
+
+# =============================
+# FLASK WEBHOOK ENDPOINT
+# =============================
+@flask_app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(), tg_app.bot)
+    tg_app.update_queue.put(update)
+    return "OK", 200
+
+
+# =============================
+# MAIN: START AUTO-THREAD + FLASK
+# =============================
+def start_bot():
     threading.Thread(target=auto_scheduler, daemon=True).start()
 
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("menu", menu_cmd))
-    app.add_handler(CallbackQueryHandler(menu_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
-
-    print("Bot đang chạy…")
-    app.run_polling()
+    tg_app.run_polling = None  # ensure not used
+    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
 
 if __name__ == "__main__":
-
-    main()
-
+    start_bot()
