@@ -1,2 +1,2 @@
 #!/bin/bash
-python bot_tele.py
+python3 bot_tele.py
