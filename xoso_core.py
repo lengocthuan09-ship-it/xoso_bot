@@ -1,8 +1,11 @@
 import json
 import os
+import shutil
 from collections import Counter
 from datetime import datetime
-import shutil
+from typing import List, Dict, Any, Optional
+
+from fastapi import FastAPI
 
 DATA_FILE = "xoso_data.json"
 
@@ -11,6 +14,8 @@ DAI_MAP = {
     "2": "Vĩnh Long",
     "3": "An Giang"
 }
+
+DEFAULT_HISTORY_DAYS = 30
 
 # ============================
 #  LOAD & SAVE DỮ LIỆU
@@ -57,112 +62,190 @@ def backup_data():
 
 
 # ============================
-#  HÀM DỰ ĐOÁN 12 SỐ
-# SỬA: Điều chỉnh logic dựa trên 18 lô.
+#  HÀM DỰ ĐOÁN 12 SỐ – “AI XÁC SUẤT”
+#  DÙNG LỊCH SỬ TỚI 30 NGÀY
 # ============================
 
-def predict_12_numbers(day_numbers):
+def _compute_gan_metrics(hist: List[Dict[str, Any]]) -> Dict[str, Dict[str, int]]:
     """
-    Công thức dự đoán:
-      - Lấy 5 số cuối
-      - 6 số ghép cặp (cộng %100)
-      - 3 số tần suất cao nhất
-      - 3 số đặc biệt: min, max, sum%100
-    
-    Lưu ý: day_numbers là 18 lô 2 chữ số đã được chuẩn hóa.
+    Tính:
+      - current_age: số ngày chưa ra (gan hiện tại)
+      - max_gap: khoảng cách lớn nhất giữa 2 lần ra (gan sâu)
+      - last_gap: khoảng cách ngay trước lần xuất hiện gần nhất (dùng tìm gan nổ)
+      - last_idx: index ngày gần nhất xuất hiện
     """
-    # CHỈNH SỬA: Đảm bảo có đủ dữ liệu (ít nhất 10 lô)
-    if len(day_numbers) < 10: 
+    k = len(hist)
+    all_nums = [f"{i:02d}" for i in range(100)]
+
+    metrics = {
+        num: {
+            "current_age": k,     # nếu chưa bao giờ ra trong N ngày thì tuổi gan = N
+            "max_gap": 0,
+            "last_gap": 0,
+            "last_idx": -1,
+        }
+        for num in all_nums
+    }
+
+    for num in all_nums:
+        prev_idx = None
+        max_gap = 0
+        last_gap = 0
+        last_idx = -1
+
+        for day_idx, day in enumerate(hist):
+            day_nums = set(day["numbers"])
+            if num in day_nums:
+                if prev_idx is None:
+                    # gap từ trước khoảng lịch sử đến ngày đầu tiên thấy
+                    gap = day_idx + 1
+                else:
+                    gap = day_idx - prev_idx
+                last_gap = gap
+                if gap > max_gap:
+                    max_gap = gap
+                prev_idx = day_idx
+                last_idx = day_idx
+
+        # current_age
+        if last_idx == -1:
+            current_age = k
+        else:
+            current_age = (k - 1) - last_idx
+
+        metrics[num]["current_age"] = current_age
+        metrics[num]["max_gap"] = max_gap
+        metrics[num]["last_gap"] = last_gap
+        metrics[num]["last_idx"] = last_idx
+
+    return metrics
+
+
+def _build_ai_scores(hist: List[Dict[str, Any]]) -> List[str]:
+    """
+    Thuật toán “AI xác suất”:
+
+    - Dùng lịch sử tối đa N ngày (mặc định 30)
+    - Trọng số theo độ mới: ngày mới hơn điểm cao hơn
+    - Score mỗi số = freq_score * 0.6 + gan_score * 0.3 + today_boost * 0.1
+    - Lấy top 12 số có score cao nhất
+    """
+
+    k = len(hist)
+    if k == 0:
+        return ["Chưa có dữ liệu đủ để dự đoán."]
+
+    all_nums = [f"{i:02d}" for i in range(100)]
+
+    # 1) Tần suất có trọng số theo ngày (mới > cũ)
+    freq_weighted = {num: 0.0 for num in all_nums}
+    for day_idx, day in enumerate(hist):
+        # ngày càng mới weight càng lớn
+        weight = (day_idx + 1)
+        for x in day["numbers"]:
+            if x in freq_weighted:
+                freq_weighted[x] += weight
+
+    max_freq = max(freq_weighted.values()) if freq_weighted else 1.0
+    if max_freq == 0:
+        max_freq = 1.0
+
+    # 2) Gan (tuổi) + gan sâu
+    metrics = _compute_gan_metrics(hist)
+    max_age = max(m["current_age"] for m in metrics.values()) or 1
+    max_gap = max(m["max_gap"] for m in metrics.values()) or 1
+
+    # 3) Ưu tiên các số vừa xuất hiện hôm nay & 5 lô cuối
+    today_numbers = hist[-1]["numbers"] if hist[-1]["numbers"] else []
+    last5_today = set(today_numbers[-5:])
+
+    scores = {}
+    for num in all_nums:
+        freq_norm = freq_weighted[num] / max_freq
+        age_norm = metrics[num]["current_age"] / max_age
+        gap_norm = metrics[num]["max_gap"] / max_gap
+
+        # Ưu tiên số hay ra (freq_norm) + số đang gan lớn (age_norm)
+        base_score = 0.6 * freq_norm + 0.2 * age_norm + 0.2 * gap_norm
+
+        # today boost
+        today_boost = 0.1 if num in last5_today else 0.0
+
+        scores[num] = base_score + today_boost
+
+    # lấy top 12 theo score
+    sorted_nums = sorted(all_nums, key=lambda n: scores[n], reverse=True)
+    return sorted_nums[:12]
+
+
+def predict_12_numbers_ai_from_history(hist: List[Dict[str, Any]]) -> List[str]:
+    """
+    Dự đoán 12 số dựa trên toàn bộ history (danh sách ngày).
+    """
+    if not hist or len(hist[-1]["numbers"]) < 10:
         return ["Không đủ dữ liệu"]
+    return _build_ai_scores(hist)
 
-    # Bỏ qua dòng chuyển đổi %100 vì dữ liệu đầu vào đã là 18 lô 2 chữ số
-    # day_numbers = [f"{int(x) % 100:02d}" for x in day_numbers] 
-    
-    # 1) 5 số cuối (lấy 5 lô cuối trong 18 lô)
-    hot = day_numbers[-5:]
 
-    # 2) 6 số ghép cặp
-    pairs = []
-    for i in range(len(hot)):
-        for j in range(i + 1, len(hot)):
-            # Chuyển đổi sang số nguyên để tính tổng
-            s = (int(hot[i]) + int(hot[j])) % 100 
-            pairs.append(f"{s:02d}")
-    pairs = pairs[:6]
-
-    # 3) 3 số tần suất cao nhất (trong 18 lô)
-    cnt = Counter(day_numbers)
-    freq = [num for num, _ in cnt.most_common(3)]
-    
-    # 4) 3 số đặc biệt
-    nums_int = [int(x) for x in day_numbers]
-    mn = min(nums_int)
-    mx = max(nums_int)
-    special = [
-        f"{mn:02d}",
-        f"{mx:02d}",
-        f"{(sum(nums_int) % 100):02d}",
-    ]
-
-    result = pairs + freq + special
-
-    # loại trùng, giữ thứ tự
-    final = []
-    seen = set()
-    for x in result:
-        if x not in seen:
-            final.append(x)
-            seen.add(x)
-
-    return final[:12]
+# Giữ hàm cũ để tương thích, nhưng bên trong dùng AI:
+def predict_12_numbers(day_numbers: List[str]) -> List[str]:
+    """
+    Backward-compatible: nếu chỗ khác vẫn gọi predict_12_numbers(numbers)
+    thì giả lập lịch sử 1 ngày.
+    """
+    fake_hist = [{"date": "N/A", "numbers": day_numbers}]
+    return predict_12_numbers_ai_from_history(fake_hist)
 
 
 # ============================
 #  LƯU – DỰ ĐOÁN
 # ============================
 
-def save_today_numbers(dai: str, numbers):
+def save_today_numbers(dai: str, numbers: List[str]):
     data = load_data()
     key = f"dai{dai}"
 
     today_str = datetime.now().strftime("%Y-%m-%d")
 
-    # CHỈNH SỬA: Bỏ qua việc chuyển đổi %100 lần nữa, vì nó đã được xử lý 
-    # trong hàm handle_input của file bot chính và dữ liệu nhập vào là 18 lô 2 chữ số
     data[key].append({
         "date": today_str,
-        "numbers": numbers 
+        "numbers": numbers
     })
 
     save_data(data)
 
 
-def get_latest_day(dai: str):
+def get_latest_day(dai: str) -> Optional[Dict[str, Any]]:
     data = load_data()
     key = f"dai{dai}"
     lst = data.get(key, [])
     return lst[-1] if lst else None
 
 
-def get_prediction_for_dai(dai: str):
-    latest = get_latest_day(dai)
-    if latest is None:
-        return ["Chưa có dữ liệu để dự đoán."]
-    return predict_12_numbers(latest["numbers"])
-
-
-# ============================
-#  LỊCH SỬ & THỐNG KÊ (GIỮ NGUYÊN - VÌ NÓ CHỈ XỬ LÝ CÁC LÔ 2 CHỮ SỐ ĐÃ LƯU)
-# ============================
-
-def get_last_n_history(dai: str, n: int = 7):
+def get_last_n_history(dai: str, n: int = DEFAULT_HISTORY_DAYS) -> List[Dict[str, Any]]:
     data = load_data()
     key = f"dai{dai}"
     hist = data.get(key, [])
     return hist[-n:] if len(hist) > n else hist
 
 
-def stats_for_dai(dai: str, days: int = 7):
+def get_prediction_for_dai(dai: str, days: int = DEFAULT_HISTORY_DAYS) -> List[str]:
+    """
+    Hàm chính để bot Telegram gọi:
+    - Mặc định dùng lịch sử 30 ngày
+    - Trả về 12 số dự đoán kiểu AI xác suất
+    """
+    hist = get_last_n_history(dai, days)
+    if not hist:
+        return ["Chưa có dữ liệu để dự đoán."]
+    return predict_12_numbers_ai_from_history(hist)
+
+
+# ============================
+#  THỐNG KÊ MẠNH – GAN SÂU, GAN NỔ, TẦN SUẤT
+# ============================
+
+def stats_for_dai(dai: str, days: int = DEFAULT_HISTORY_DAYS) -> Optional[Dict[str, Any]]:
     hist = get_last_n_history(dai, days)
     if not hist:
         return None
@@ -177,10 +260,10 @@ def stats_for_dai(dai: str, days: int = 7):
 
     cnt = Counter(flat)
 
-    # top10
+    # top10 (số ra nhiều nhất)
     top10 = cnt.most_common(10)
 
-    # bottom10 (00-99)
+    # bottom10 (số ra ít nhất trong 00–99)
     all_nums = [f"{i:02d}" for i in range(100)]
     lst = sorted([(x, cnt.get(x, 0)) for x in all_nums], key=lambda x: x[1])
     bottom10 = lst[:10]
@@ -188,22 +271,39 @@ def stats_for_dai(dai: str, days: int = 7):
     even = sum(1 for x in flat if int(x) % 2 == 0)
     odd = len(flat) - even
 
-    hot = top10[0][0]
+    hot = top10[0][0] if top10 else None
 
-    # tính tuổi gan
-    last_seen = {num: -1 for num in all_nums}
-    for idx, day in enumerate(hist):
-        for x in day["numbers"]:
-            last_seen[x] = idx
-
-    cold = None
-    cold_age = -1
+    # Tính gan sâu / gan nổ
+    metrics = _compute_gan_metrics(hist)
     k = len(hist)
-    for num, pos in last_seen.items():
-        age = k - pos if pos >= 0 else k + 1
-        if age > cold_age:
-            cold = num
-            cold_age = age
+
+    # top 10 gan hiện tại (số lâu chưa ra nhất)
+    current_gan_top10 = sorted(
+        [(num, m["current_age"]) for num, m in metrics.items()],
+        key=lambda x: x[1],
+        reverse=True
+    )[:10]
+
+    # top 10 gan sâu (max_gap lớn nhất)
+    max_gan_top10 = sorted(
+        [(num, m["max_gap"]) for num, m in metrics.items()],
+        key=lambda x: x[1],
+        reverse=True
+    )[:10]
+
+    # gan nổ: số vừa ra gần đây (ngày cuối) nhưng trước đó có khoảng cách lớn
+    gan_no_candidates = []
+    for num, m in metrics.items():
+        if m["last_idx"] == k - 1 and m["last_gap"] >= 5:
+            gan_no_candidates.append((num, m["last_gap"]))
+    gan_no = sorted(gan_no_candidates, key=lambda x: x[1], reverse=True)[:10]
+
+    # “đồ thị tần suất” – dữ liệu thô để vẽ hoặc in bar chart
+    frequency_chart = sorted(
+        [(num, cnt.get(num, 0)) for num in all_nums],
+        key=lambda x: x[1],
+        reverse=True
+    )
 
     return {
         "top10": top10,
@@ -211,9 +311,14 @@ def stats_for_dai(dai: str, days: int = 7):
         "even": even,
         "odd": odd,
         "hot": hot,
-        "cold": cold,
         "total_draws": len(flat),
         "days": k,
+
+        # thống kê nâng cao:
+        "current_gan_top10": current_gan_top10,  # (số, số ngày chưa ra)
+        "max_gan_top10": max_gan_top10,          # (số, gap lớn nhất từng có)
+        "gan_no": gan_no,                        # (số, gap trước khi nổ)
+        "frequency_chart": frequency_chart,      # dữ liệu để vẽ đồ thị tần suất
     }
 
 
@@ -221,7 +326,7 @@ def stats_for_dai(dai: str, days: int = 7):
 #  XÓA LỊCH SỬ
 # ============================
 
-def clear_history(dai: str):
+def clear_history(dai: str) -> bool:
     data = load_data()
     key = f"dai{dai}"
     if key not in data:
@@ -229,3 +334,60 @@ def clear_history(dai: str):
     data[key] = []
     save_data(data)
     return True
+
+
+# ============================
+#  API CHO BOT TELEGRAM (FastAPI)
+# ============================
+
+app = FastAPI()
+
+
+@app.get("/api/predict/{dai}")
+def api_predict(dai: int, days: int = DEFAULT_HISTORY_DAYS):
+    """
+    GET /api/predict/1?days=30
+    → trả về 12 số dự đoán cho đài 1 với lịch sử 30 ngày.
+    """
+    prediction = get_prediction_for_dai(str(dai), days)
+    return {
+        "dai": dai,
+        "dai_name": DAI_MAP.get(str(dai), "Không rõ"),
+        "days_used": days,
+        "prediction": prediction,
+    }
+
+
+@app.get("/api/stats/{dai}")
+def api_stats(dai: int, days: int = DEFAULT_HISTORY_DAYS):
+    """
+    GET /api/stats/1?days=30
+    → trả về thống kê mạnh cho bot sử dụng.
+    """
+    stats = stats_for_dai(str(dai), days)
+    if stats is None:
+        return {
+            "dai": dai,
+            "dai_name": DAI_MAP.get(str(dai), "Không rõ"),
+            "error": "Chưa có dữ liệu."
+        }
+    return {
+        "dai": dai,
+        "dai_name": DAI_MAP.get(str(dai), "Không rõ"),
+        "days_used": days,
+        "stats": stats,
+    }
+
+
+@app.get("/api/history/{dai}")
+def api_history(dai: int, days: int = DEFAULT_HISTORY_DAYS):
+    """
+    GET /api/history/1?days=30
+    → trả về lịch sử N ngày (để debug / kiểm tra).
+    """
+    hist = get_last_n_history(str(dai), days)
+    return {
+        "dai": dai,
+        "dai_name": DAI_MAP.get(str(dai), "Không rõ"),
+        "history": hist,
+    }
