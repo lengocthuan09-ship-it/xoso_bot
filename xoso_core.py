@@ -1,11 +1,8 @@
 import json
 import os
-import shutil
 from collections import Counter
 from datetime import datetime
-from typing import List, Dict, Any, Optional
-
-from fastapi import FastAPI
+import shutil
 
 DATA_FILE = "xoso_data.json"
 
@@ -14,9 +11,6 @@ DAI_MAP = {
     "2": "Vĩnh Long",
     "3": "An Giang"
 }
-
-DEFAULT_HISTORY_DAYS = 30
-
 
 # ============================
 #  LOAD & SAVE DỮ LIỆU
@@ -38,9 +32,10 @@ def load_data():
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except:
+    except Exception:
         return _init_empty_data()
 
+    # đảm bảo các key luôn tồn tại
     for k in ["dai1", "dai2", "dai3"]:
         if k not in data:
             data[k] = []
@@ -57,6 +52,7 @@ def backup_data():
     """Sao lưu file data mỗi ngày."""
     if not os.path.exists(DATA_FILE):
         return
+
     os.makedirs("backups", exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d")
     backup_path = os.path.join("backups", f"xoso_backup_{ts}.json")
@@ -64,178 +60,190 @@ def backup_data():
 
 
 # ============================
-#  AI – XÁC SUẤT
+#  HÀM DỰ ĐOÁN 12 SỐ (NÂNG CẤP)
 # ============================
 
-def _compute_gan_metrics(hist: List[Dict[str, Any]]) -> Dict[str, Dict[str, int]]:
-    k = len(hist)
-    all_nums = [f"{i:02d}" for i in range(100)]
+def predict_12_numbers(day_numbers):
+    """
+    Nâng cấp mạnh hơn nhưng vẫn giữ nguyên cấu trúc:
+      - 5 số cuối
+      - Ghép cặp (tăng lên 10 cặp)
+      - Tần suất cao
+      - Min – Max – Sum%100
+      - Luôn đảm bảo đúng 12 số
+    """
 
-    metrics = {
-        num: {
-            "current_age": k,
-            "max_gap": 0,
-            "last_gap": 0,
-            "last_idx": -1,
-        }
-        for num in all_nums
-    }
-
-    for num in all_nums:
-        prev_idx = None
-        max_gap = 0
-        last_gap = 0
-        last_idx = -1
-
-        for day_idx, day in enumerate(hist):
-            if num in day["numbers"]:
-                if prev_idx is None:
-                    gap = day_idx + 1
-                else:
-                    gap = day_idx - prev_idx
-                last_gap = gap
-                max_gap = max(max_gap, gap)
-                prev_idx = day_idx
-                last_idx = day_idx
-
-        if last_idx == -1:
-            current_age = k
-        else:
-            current_age = (k - 1) - last_idx
-
-        metrics[num]["current_age"] = current_age
-        metrics[num]["max_gap"] = max_gap
-        metrics[num]["last_gap"] = last_gap
-        metrics[num]["last_idx"] = last_idx
-
-    return metrics
-
-
-def _build_ai_scores(hist):
-    k = len(hist)
-    all_nums = [f"{i:02d}" for i in range(100)]
-
-    freq_weighted = {num: 0.0 for num in all_nums}
-    for day_idx, day in enumerate(hist):
-        weight = day_idx + 1
-        for x in day["numbers"]:
-            freq_weighted[x] += weight
-
-    max_freq = max(freq_weighted.values()) or 1
-
-    metrics = _compute_gan_metrics(hist)
-    max_age = max(m["current_age"] for m in metrics.values()) or 1
-    max_gap = max(m["max_gap"] for m in metrics.values()) or 1
-
-    today_last5 = set(hist[-1]["numbers"][-5:])
-
-    scores = {}
-    for num in all_nums:
-        freq_norm = freq_weighted[num] / max_freq
-        age_norm = metrics[num]["current_age"] / max_age
-        gap_norm = metrics[num]["max_gap"] / max_gap
-        today_boost = 0.1 if num in today_last5 else 0.0
-
-        score = (
-            0.6 * freq_norm +
-            0.2 * age_norm +
-            0.2 * gap_norm +
-            today_boost
-        )
-        scores[num] = score
-
-    sorted_nums = sorted(all_nums, key=lambda n: scores[n], reverse=True)
-    return sorted_nums[:12]
-
-
-def predict_12_numbers_ai_from_history(hist):
-    if not hist or len(hist[-1]["numbers"]) < 10:
+    if len(day_numbers) < 10:
         return ["Không đủ dữ liệu"]
-    return _build_ai_scores(hist)
 
+    # ---------------------------------------
+    # 1) 5 số cuối
+    # ---------------------------------------
+    hot = day_numbers[-5:]
 
-# Compatibility
-def predict_12_numbers(numbers):
-    fake_hist = [{"date": "N/A", "numbers": numbers}]
-    return predict_12_numbers_ai_from_history(fake_hist)
+    # ---------------------------------------
+    # 2) Ghép cặp – nâng cấp tạo 10 số
+    # ---------------------------------------
+    pair_candidates = []
+    for i in range(len(hot)):
+        for j in range(i + 1, len(hot)):
+            s = (int(hot[i]) + int(hot[j])) % 100
+            pair_candidates.append(f"{s:02d}")
+
+    pairs = pair_candidates[:10]  # tăng từ 6 → 10
+
+    # ---------------------------------------
+    # 3) Top 3 tần suất cao trong 18 lô
+    # ---------------------------------------
+    cnt = Counter(day_numbers)
+    freq = [num for num, _ in cnt.most_common(3)]
+
+    # ---------------------------------------
+    # 4) 3 số đặc biệt: min – max – sum % 100
+    # ---------------------------------------
+    nums_int = [int(x) for x in day_numbers]
+    mn = min(nums_int)
+    mx = max(nums_int)
+    special = [
+        f"{mn:02d}",
+        f"{mx:02d}",
+        f"{(sum(nums_int) % 100):02d}",
+    ]
+
+    # ---------------------------------------
+    # Gộp kết quả theo đúng logic cũ
+    # ---------------------------------------
+    raw = pairs + freq + special
+
+    # Loại trùng – giữ thứ tự
+    final = []
+    seen = set()
+    for x in raw:
+        if x not in seen:
+            final.append(x)
+            seen.add(x)
+
+    # ---------------------------------------
+    # BỔ SUNG nếu < 12 số (fix lỗi trước đây)
+    # ---------------------------------------
+    if len(final) < 12:
+        # lấy số ít xuất hiện nhất để tăng độ cân bằng
+        all_nums = [f"{i:02d}" for i in range(100)]
+        low_freq_sorted = sorted(all_nums, key=lambda n: cnt.get(n, 0))
+
+        for x in low_freq_sorted:
+            if x not in seen:
+                final.append(x)
+                seen.add(x)
+            if len(final) == 12:
+                break
+
+    return final[:12]
 
 
 # ============================
-#  LƯU – LỊCH SỬ
+#  LƯU – DỰ ĐOÁN
 # ============================
 
-def save_today_numbers(dai, numbers):
+def save_today_numbers(dai: str, numbers):
     data = load_data()
     key = f"dai{dai}"
-    today = datetime.now().strftime("%Y-%m-%d")
 
-    data[key].append({"date": today, "numbers": numbers})
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    data[key].append({
+        "date": today_str,
+        "numbers": numbers
+    })
+
     save_data(data)
 
 
-def get_last_n_history(dai, n=DEFAULT_HISTORY_DAYS):
+def get_latest_day(dai: str):
+    data = load_data()
+    key = f"dai{dai}"
+    lst = data.get(key, [])
+    return lst[-1] if lst else None
+
+
+def get_prediction_for_dai(dai: str):
+    latest = get_latest_day(dai)
+    if latest is None:
+        return ["Chưa có dữ liệu để dự đoán."]
+    return predict_12_numbers(latest["numbers"])
+
+
+# ============================
+#  LỊCH SỬ & THỐNG KÊ (GIỮ NGUYÊN)
+# ============================
+
+def get_last_n_history(dai: str, n: int = 7):
     data = load_data()
     key = f"dai{dai}"
     hist = data.get(key, [])
     return hist[-n:] if len(hist) > n else hist
 
 
-# ============================
-#  API CHÍNH CHO RENDER
-# ============================
-
-app = FastAPI()
-
-
-@app.get("/")
-def home():
-    return {"status": "ok", "message": "XoSo AI API running on Render"}
-
-
-@app.get("/api/predict/{dai}")
-def api_predict(dai: int, days: int = DEFAULT_HISTORY_DAYS):
-    hist = get_last_n_history(str(dai), days)
-    prediction = predict_12_numbers_ai_from_history(hist)
-    return {
-        "dai": dai,
-        "dai_name": DAI_MAP.get(str(dai), "Không rõ"),
-        "days_used": days,
-        "prediction": prediction
-    }
-
-
-@app.get("/api/stats/{dai}")
-def api_stats(dai: int, days: int = DEFAULT_HISTORY_DAYS):
-    hist = get_last_n_history(str(dai), days)
+def stats_for_dai(dai: str, days: int = 7):
+    hist = get_last_n_history(dai, days)
     if not hist:
-        return {"error": "Chưa có dữ liệu"}
+        return None
 
-    flat = [x for h in hist for x in h["numbers"]]
+    flat = []
+    for day in hist:
+        flat.extend(day["numbers"])
+
+    if not flat:
+        return None
+
     cnt = Counter(flat)
 
-    metrics = _compute_gan_metrics(hist)
+    top10 = cnt.most_common(10)
 
-    current_gan = sorted(
-        [(n, m["current_age"]) for n, m in metrics.items()],
-        key=lambda x: x[1],
-        reverse=True
-    )[:10]
+    all_nums = [f"{i:02d}" for i in range(100)]
+    lst = sorted([(x, cnt.get(x, 0)) for x in all_nums], key=lambda x: x[1])
+    bottom10 = lst[:10]
 
-    max_gan = sorted(
-        [(n, m["max_gap"]) for n, m in metrics.items()],
-        key=lambda x: x[1],
-        reverse=True
-    )[:10]
+    even = sum(1 for x in flat if int(x) % 2 == 0)
+    odd = len(flat) - even
+
+    hot = top10[0][0] if top10 else None
+
+    last_seen = {num: -1 for num in all_nums}
+    for idx, day in enumerate(hist):
+        for x in day["numbers"]:
+            last_seen[x] = idx
+
+    cold = None
+    cold_age = -1
+    k = len(hist)
+    for num, pos in last_seen.items():
+        age = k - pos if pos >= 0 else k + 1
+        if age > cold_age:
+            cold = num
+            cold_age = age
 
     return {
-        "dai": dai,
-        "current_gan_top10": current_gan,
-        "max_gan_top10": max_gan,
-        "top10": cnt.most_common(10),
+        "top10": top10,
+        "bottom10": bottom10,
+        "even": even,
+        "odd": odd,
+        "hot": hot,
+        "cold": cold,
+        "total_draws": len(flat),
+        "days": k,
     }
 
 
-@app.get("/api/history/{dai}")
-def api_history(dai: int, days: int = DEFAULT_HISTORY_DAYS):
-    hist = get_last_n_history(str(dai), days)
-    return {"history": hist}
+# ============================
+#  XÓA LỊCH SỬ
+# ============================
+
+def clear_history(dai: str):
+    data = load_data()
+    key = f"dai{dai}"
+    if key not in data:
+        return False
+    data[key] = []
+    save_data(data)
+    return True
