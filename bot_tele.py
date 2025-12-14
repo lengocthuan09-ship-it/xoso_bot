@@ -47,9 +47,9 @@ WEBHOOK_URL = f"{RENDER_URL}/{BOT_TOKEN}"
 ADMIN_USERNAME = "x117277"
 ADMIN_IDS = {5546717219}
 
-ANALYZE_FEE = 1.5
-MIN_DEPOSIT_VND = 200_000
-USDT_RATE = 27000
+ANALYZE_FEE = 4
+MIN_DEPOSIT_VND = 100_000
+USDT_RATE = 27600
 
 BALANCE_FILE = "balances.json"
 BILL_FILE = "bank_bills.json"
@@ -306,3 +306,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
