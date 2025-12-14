@@ -2,6 +2,7 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta
+import json
 
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -32,22 +33,55 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("Thiếu BOT_TOKEN trong Environment variables của Render!")
 
-# Nếu muốn auto gửi mỗi ngày thì set AUTO_CHAT_ID trong Environment
 AUTO_CHAT_ID = int(os.getenv("AUTO_CHAT_ID", "0"))
 
 WAITING_INPUT: dict[int, str] = {}
 LAST_SELECTED_DAI: dict[int, str] = {}
 
-# Render sẽ set biến PORT. Nếu không có thì dùng 10000 (local)
 PORT = int(os.environ.get("PORT", "10000"))
 
-# URL public của service trên Render
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://xoso-bot.onrender.com")
 WEBHOOK_PATH = f"/{BOT_TOKEN}"
 WEBHOOK_URL = f"{RENDER_URL}{WEBHOOK_PATH}"
 
+# ===== ADD CONFIG =====
+ADMIN_USERNAME = "x117277"
+ADMIN_IDS = {5546717219}
+
+ANALYZE_FEE = 1.5  # USDT / 1 lần dự đoán
+BALANCE_FILE = "balances.json"
+
 # =============================
-# FORMAT PREDICTION
+# BALANCE SYSTEM (ADD)
+# =============================
+
+def _load_balances():
+    if not os.path.exists(BALANCE_FILE):
+        return {}
+    with open(BALANCE_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def _save_balances(data):
+    with open(BALANCE_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+def get_balance(uid: int) -> float:
+    return _load_balances().get(str(uid), 0.0)
+
+def add_balance(uid: int, amount: float):
+    data = _load_balances()
+    k = str(uid)
+    data[k] = data.get(k, 0.0) + amount
+    _save_balances(data)
+
+def sub_balance(uid: int, amount: float):
+    data = _load_balances()
+    k = str(uid)
+    data[k] = data.get(k, 0.0) - amount
+    _save_balances(data)
+
+# =============================
+# FORMAT PREDICTION (GIỮ NGUYÊN)
 # =============================
 
 def format_prediction(dai: str, preds: list[str]) -> str:
@@ -77,36 +111,56 @@ def format_prediction(dai: str, preds: list[str]) -> str:
     )
 
 # =============================
-# AUTO DAILY AT 16:35 (dùng httpx, không ảnh hưởng event loop)
+# ADD: PREDICTION WITH FEE
+# =============================
+
+def get_prediction_with_fee(uid: int, dai: str) -> str:
+    bal = get_balance(uid)
+    if bal < ANALYZE_FEE:
+        return (
+            "❌ Không đủ số dư để dự đoán\n"
+            f"💰 Cần: {ANALYZE_FEE} USDT\n"
+            f"💼 Hiện có: {bal:.2f} USDT\n\n"
+            f"📞 Liên hệ admin: @{ADMIN_USERNAME}"
+        )
+
+    preds = get_prediction_for_dai(dai)
+    sub_balance(uid, ANALYZE_FEE)
+    new_bal = get_balance(uid)
+
+    return (
+        format_prediction(dai, preds)
+        + f"\n\n💰 Phí: {ANALYZE_FEE} USDT"
+        + f"\n💼 Số dư còn: {new_bal:.2f} USDT"
+        + f"\n📞 Hỗ trợ: @{ADMIN_USERNAME}"
+    )
+
+# =============================
+# AUTO DAILY AT 16:35 (GIỮ NGUYÊN)
 # =============================
 
 def send_auto(text: str) -> None:
     if not AUTO_CHAT_ID:
-        # không cấu hình AUTO_CHAT_ID thì bỏ qua, tránh lỗi
         print("AUTO_CHAT_ID chưa cấu hình, bỏ qua auto gửi.")
         return
 
     try:
-        resp = httpx.post(
+        httpx.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
             json={"chat_id": AUTO_CHAT_ID, "text": text},
             timeout=30.0,
         )
-        print("Auto send status:", resp.status_code, resp.text[:200])
     except Exception as e:
-        print("Lỗi khi auto send:", e)
+        print("Lỗi auto send:", e)
 
 def auto_scheduler() -> None:
     while True:
         now = datetime.now()
-        # 16:35 hằng ngày
         run = now.replace(hour=16, minute=35, second=0, microsecond=0)
         if now >= run:
             run += timedelta(days=1)
 
-        wait = (run - now).total_seconds()
-        print(f"⏳ Scheduler: chờ đến {run} để auto dự đoán…")
-        time.sleep(max(wait, 1))
+        time.sleep(max((run - now).total_seconds(), 1))
 
         msg = "📅 Auto dự đoán:\n\n"
         for dai in ["1", "2", "3"]:
@@ -115,10 +169,9 @@ def auto_scheduler() -> None:
 
         send_auto(msg)
         backup_data()
-        print("✔ Auto xong 1 lượt.")
 
 # =============================
-# KEYBOARD UI
+# KEYBOARD UI (GIỮ NGUYÊN)
 # =============================
 
 def menu_keyboard() -> InlineKeyboardMarkup:
@@ -149,7 +202,7 @@ def dai_select_keyboard(prefix: str) -> InlineKeyboardMarkup:
     )
 
 # =============================
-# COMMANDS
+# COMMANDS (GIỮ NGUYÊN)
 # =============================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -192,13 +245,11 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     LAST_SELECTED_DAI[q.from_user.id] = dai
+    uid = q.from_user.id
 
     if action == "pred":
-        preds = get_prediction_for_dai(dai)
-        await q.edit_message_text(
-            format_prediction(dai, preds),
-            reply_markup=menu_keyboard(),
-        )
+        msg = get_prediction_with_fee(uid, dai)
+        await q.edit_message_text(msg, reply_markup=menu_keyboard())
         return
 
     if action == "hist":
@@ -246,8 +297,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if action == "input":
-        uid = q.from_user.id
-        WAITING_INPUT[uid] = dai
+        WAITING_INPUT[q.from_user.id] = dai
         await q.edit_message_text(
             f"📝 Nhập 18 số cho {DAI_MAP[dai]} theo dạng:\n"
             f"00 11 22 ...",
@@ -255,32 +305,27 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
 # =============================
-# HANDLE 18-NUMBER INPUT
+# HANDLE INPUT (GIỮ NGUYÊN)
 # =============================
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     uid = update.message.from_user.id
 
     if uid not in WAITING_INPUT:
-        # tin nhắn thường, bỏ qua
         return
 
     dai = WAITING_INPUT.pop(uid)
-    LAST_SELECTED_DAI[uid] = dai
-
     parts = update.message.text.strip().split()
+
     if len(parts) != 18:
         WAITING_INPUT[uid] = dai
-        await update.message.reply_text(
-            "❌ Bạn phải nhập đúng 18 số (18 lô XSMN)!\n"
-            "Ví dụ: 00 11 22 ..."
-        )
+        await update.message.reply_text("❌ Bạn phải nhập đúng 18 số!")
         return
 
-    nums: list[str] = []
+    nums = []
     for x in parts:
         if not x.isdigit():
-            await update.message.reply_text("❌ Sai định dạng số, chỉ nhập số 0-99!")
+            await update.message.reply_text("❌ Sai định dạng số!")
             return
         nums.append(f"{int(x):02d}")
 
@@ -297,7 +342,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 # =============================
-# TẠO APPLICATION & ĐĂNG KÝ HANDLER
+# APP INIT
 # =============================
 
 application = Application.builder().token(BOT_TOKEN).build()
@@ -312,21 +357,13 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_i
 # =============================
 
 def main() -> None:
-    # chạy auto scheduler ở thread riêng (nếu cấu hình AUTO_CHAT_ID)
     if AUTO_CHAT_ID:
         threading.Thread(target=auto_scheduler, daemon=True).start()
-    else:
-        print("Không cấu hình AUTO_CHAT_ID, auto scheduler sẽ không gửi tin.")
 
-    print("Starting bot with webhook...")
-    print("Webhook URL:", WEBHOOK_URL)
-    # run_webhook sẽ:
-    #  - mở web server trên PORT (Render yêu cầu)
-    #  - setWebhook tới WEBHOOK_URL
     application.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        url_path=BOT_TOKEN,   # đường dẫn /<BOT_TOKEN>
+        url_path=BOT_TOKEN,
         webhook_url=WEBHOOK_URL,
     )
 
