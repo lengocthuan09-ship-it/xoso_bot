@@ -3,7 +3,7 @@ import json
 import threading
 import time
 from datetime import datetime, timedelta
-
+VN_TZ = timezone(timedelta(hours=7))
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -185,9 +185,44 @@ def dai_select_keyboard(prefix: str):
 # =============================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+
+    uid = user.id
+    username = user.username or "Không có username"
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+
+    now_vn = datetime.now(VN_TZ).strftime("%d/%m/%Y %H:%M:%S")
+
+    # ====== GỬI CHO USER ======
     await update.message.reply_text(
-        "🤖 Bot đã sẵn sàng!\n👉 Nhấn /menu để mở."
+        "👋 Chào mừng bạn đến với Bot Dự Đoán XSMN!\n\n"
+        f"🆔 UID: `{uid}`\n"
+        f"👤 Tên: {full_name}\n"
+        f"🔖 Username: @{username}\n"
+        f"🕒 Thời gian: {now_vn} (VN)\n\n"
+        "📌 Lưu lại UID để nạp tiền / liên hệ admin.\n"
+        "👉 Nhấn /menu để bắt đầu.",
+        parse_mode="Markdown"
     )
+
+    # ====== THÔNG BÁO ADMIN ======
+    admin_msg = (
+        "🚨 USER START BOT\n\n"
+        f"🆔 UID: {uid}\n"
+        f"👤 Tên: {full_name}\n"
+        f"🔖 Username: @{username}\n"
+        f"🕒 Thời gian: {now_vn} (VN)"
+    )
+
+    for admin_id in ADMIN_IDS:
+        try:
+            await context.bot.send_message(
+                chat_id=admin_id,
+                text=admin_msg
+            )
+        except Exception as e:
+            print(f"Lỗi gửi admin notify: {e}")
+
 
 async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -396,4 +431,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
