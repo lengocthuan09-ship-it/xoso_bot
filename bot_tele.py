@@ -196,27 +196,44 @@ async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def addmoney_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id not in ADMIN_IDS:
+    from_user = update.message.from_user
+
+    # Không phải admin → báo rõ
+    if from_user.id not in ADMIN_IDS:
+        await update.message.reply_text("❌ Bạn không có quyền admin.")
         return
 
+    # Sai cú pháp → hướng dẫn rõ
     if len(context.args) != 2:
-        await update.message.reply_text("/addmoney <user_id> <amount>")
+        await update.message.reply_text(
+            "⚠ Cú pháp đúng:\n"
+            "/addmoney <user_id> <amount>\n\n"
+            "Ví dụ:\n"
+            "/addmoney 123456789 10"
+        )
         return
 
     try:
-        uid = int(context.args[0])
+        target_uid = int(context.args[0])
         amount = float(context.args[1])
-    except:
-        await update.message.reply_text("❌ Sai định dạng.")
+    except ValueError:
+        await update.message.reply_text("❌ user_id hoặc amount không hợp lệ.")
         return
 
-    add_balance(uid, amount)
-    log_tx(uid, amount, "ADMIN_ADD")
+    if amount <= 0:
+        await update.message.reply_text("❌ Số tiền phải > 0.")
+        return
+
+    add_balance(target_uid, amount)
+    log_tx(target_uid, amount, f"ADMIN_ADD by {from_user.id}")
 
     await update.message.reply_text(
-        f"✅ Đã cộng {amount} USDT cho user {uid}\n"
-        f"💳 Số dư mới: {get_balance(uid)} USDT"
+        f"✅ CỘNG TIỀN THÀNH CÔNG\n\n"
+        f"👤 User ID: {target_uid}\n"
+        f"💰 +{amount} USDT\n"
+        f"💳 Số dư mới: {get_balance(target_uid)} USDT"
     )
+
 
 # =============================
 # MENU CALLBACK (TRỪ PHÍ Ở ĐÂY)
@@ -379,3 +396,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
