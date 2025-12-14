@@ -44,9 +44,6 @@ PORT = int(os.environ.get("PORT", "10000"))
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "")
 WEBHOOK_URL = f"{RENDER_URL}/{BOT_TOKEN}"
 
-WAITING_INPUT: dict[int, str] = {}
-LAST_SELECTED_DAI: dict[int, str] = {}
-
 ADMIN_USERNAME = "x117277"
 ADMIN_IDS = {5546717219}
 
@@ -58,7 +55,7 @@ BALANCE_FILE = "balances.json"
 BILL_FILE = "bank_bills.json"
 
 # =============================
-# HELPERS JSON
+# JSON HELPERS
 # =============================
 def _load_json(path, default):
     if not os.path.exists(path):
@@ -71,7 +68,7 @@ def _save_json(path, data):
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 # =============================
-# BALANCE
+# BALANCE SYSTEM
 # =============================
 def get_balance(uid: int) -> float:
     return _load_json(BALANCE_FILE, {}).get(str(uid), 0.0)
@@ -89,7 +86,7 @@ def sub_balance(uid: int, amount: float):
     _save_json(BALANCE_FILE, data)
 
 # =============================
-# BILL SYSTEM (GIỐNG edit.py)
+# BILL SYSTEM
 # =============================
 def create_bill(uid: int, vnd: int):
     bills = _load_json(BILL_FILE, [])
@@ -98,7 +95,6 @@ def create_bill(uid: int, vnd: int):
         "id": bill_id,
         "uid": uid,
         "vnd": vnd,
-        "image_file_id": None,
         "status": "WAIT",
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
@@ -117,11 +113,21 @@ def approve_bill(bill_id: int):
     return None, 0.0
 
 # =============================
+# ✅ CHỐNG 2 BILL / 1 USER
+# =============================
+def has_pending_bill(uid: int) -> bool:
+    bills = _load_json(BILL_FILE, [])
+    for b in bills:
+        if b["uid"] == uid and b["status"] == "WAIT":
+            return True
+    return False
+
+# =============================
 # FORMAT PREDICTION
 # =============================
 def format_prediction(dai: str, preds: list[str]) -> str:
     name = DAI_MAP.get(dai, "?")
-    if not preds or (len(preds) == 1 and "Chưa có dữ liệu" in preds[0]):
+    if not preds:
         return f"🎯 {name}\n⚠ Chưa đủ dữ liệu"
     return f"🎯 Dự đoán – {name}\n\n{' '.join(preds)}"
 
@@ -204,7 +210,17 @@ async def menu_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = q.data
     uid = q.from_user.id
 
+    # 🚫 CHẶN NGAY TỪ MENU
     if data == "deposit":
+        if has_pending_bill(uid):
+            await q.edit_message_text(
+                "❌ Bạn đang có 1 bill chưa được duyệt.\n"
+                "📌 Vui lòng chờ admin xử lý trước khi nạp tiếp.\n\n"
+                f"📞 Admin: @{ADMIN_USERNAME}",
+                reply_markup=menu_keyboard()
+            )
+            return
+
         ctx.user_data["deposit"] = True
         await q.edit_message_text(
             f"💳 Nhập số tiền VND (tối thiểu {MIN_DEPOSIT_VND:,}):"
@@ -224,31 +240,21 @@ async def menu_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # ===== ADMIN DUYỆT BILL =====
-    if data.startswith("approve_bill_"):
-        if uid not in ADMIN_IDS:
-            await q.answer("Không có quyền", show_alert=True)
-            return
-
-        bill_id = int(data.split("_")[-1])
-        u, usdt = approve_bill(bill_id)
-
-        if not u:
-            await q.edit_message_caption("❌ Bill không hợp lệ / đã duyệt")
-            return
-
-        await q.edit_message_caption(f"✅ BILL #{bill_id} ĐÃ DUYỆT\n+{usdt} USDT")
-        await ctx.bot.send_message(
-            u,
-            f"✅ Nạp tiền thành công\n+{usdt} USDT\n💼 Số dư: {get_balance(u):.2f} USDT"
-        )
-        return
-
 async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.message.from_user.id
     text = update.message.text.strip()
 
     if ctx.user_data.get("deposit"):
+        # 🚫 CHẶN LẦN CUỐI (AN TOÀN TUYỆT ĐỐI)
+        if has_pending_bill(uid):
+            await update.message.reply_text(
+                "❌ Bạn đã có bill đang chờ duyệt.\n"
+                "📌 Không thể tạo bill mới.\n\n"
+                f"📞 Admin: @{ADMIN_USERNAME}"
+            )
+            ctx.user_data.clear()
+            return
+
         try:
             vnd = int(text.replace(",", ""))
             if vnd < MIN_DEPOSIT_VND:
@@ -259,13 +265,13 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         bill_id = create_bill(uid, vnd)
         ctx.user_data.clear()
-        ctx.user_data["wait_bill_image"] = bill_id
 
         caption = (
             f"🏦 THÔNG TIN CHUYỂN KHOẢN\n"
             f"💰 {vnd:,} VND\n"
             f"🧾 Nội dung CK: ID {uid}\n\n"
-            f"📸 Sau khi chuyển khoản, gửi ẢNH BILL tại đây"
+            f"📌 Sau khi chuyển khoản, chờ admin duyệt\n"
+            f"📞 Admin: @{ADMIN_USERNAME}"
         )
 
         try:
@@ -273,45 +279,6 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_photo(photo=f, caption=caption)
         except:
             await update.message.reply_text(caption)
-
-async def handle_bill_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = update.message.from_user.id
-    bill_id = ctx.user_data.get("wait_bill_image")
-    if not bill_id:
-        return
-
-    photo = update.message.photo[-1]
-    file_id = photo.file_id
-
-    bills = _load_json(BILL_FILE, [])
-    bill = None
-    for b in bills:
-        if b["id"] == bill_id and b["uid"] == uid:
-            b["image_file_id"] = file_id
-            bill = b
-            break
-
-    _save_json(BILL_FILE, bills)
-    ctx.user_data.pop("wait_bill_image", None)
-
-    await update.message.reply_text("✅ Đã nhận ảnh bill, chờ admin duyệt.")
-
-    for aid in ADMIN_IDS:
-        await ctx.bot.send_photo(
-            aid,
-            photo=file_id,
-            caption=(
-                f"🧾 BILL #{bill_id}\n"
-                f"UID: {uid}\n"
-                f"💰 {bill['vnd']:,} VND"
-            ),
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton(
-                    "✅ DUYỆT BILL",
-                    callback_data=f"approve_bill_{bill_id}"
-                )]]
-            )
-        )
 
 # =============================
 # APP INIT
@@ -321,7 +288,6 @@ app = Application.builder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("menu", menu_cmd))
 app.add_handler(CallbackQueryHandler(menu_callback))
-app.add_handler(MessageHandler(filters.PHOTO, handle_bill_photo))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
 # =============================
