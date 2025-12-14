@@ -24,13 +24,16 @@ from xoso_core import (
     DAI_MAP,
     clear_history,
 )
+
+# =============================
+# PATHS
+# =============================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BANK_QR_PATH = os.path.join(BASE_DIR, "bank_qr.png")
 
 # =============================
-# CONFIG (GIỮ NGUYÊN + ADD)
+# CONFIG
 # =============================
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("Thiếu BOT_TOKEN")
@@ -44,21 +47,19 @@ WEBHOOK_URL = f"{RENDER_URL}/{BOT_TOKEN}"
 WAITING_INPUT: dict[int, str] = {}
 LAST_SELECTED_DAI: dict[int, str] = {}
 
-# ===== ADD CONFIG =====
 ADMIN_USERNAME = "x117277"
 ADMIN_IDS = {5546717219}
 
-ANALYZE_FEE = 1.5  # USDT / 1 lần dự đoán
+ANALYZE_FEE = 1.5
 MIN_DEPOSIT_VND = 200_000
-USDT_RATE = 27000  # fix cứng, giống edit.py bản đơn giản
+USDT_RATE = 27000
 
 BALANCE_FILE = "balances.json"
 BILL_FILE = "bank_bills.json"
 
 # =============================
-# BALANCE SYSTEM (ADD)
+# HELPERS JSON
 # =============================
-
 def _load_json(path, default):
     if not os.path.exists(path):
         return default
@@ -67,8 +68,11 @@ def _load_json(path, default):
 
 def _save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
+# =============================
+# BALANCE
+# =============================
 def get_balance(uid: int) -> float:
     return _load_json(BALANCE_FILE, {}).get(str(uid), 0.0)
 
@@ -83,35 +87,52 @@ def sub_balance(uid: int, amount: float):
     k = str(uid)
     data[k] = data.get(k, 0.0) - amount
     _save_json(BALANCE_FILE, data)
-dd
-# =============================
-# FORMAT PREDICTION (GIỮ NGUYÊN)
-# =============================
 
+# =============================
+# BILL SYSTEM (GIỐNG edit.py)
+# =============================
+def create_bill(uid: int, vnd: int):
+    bills = _load_json(BILL_FILE, [])
+    bill_id = len(bills) + 1
+    bills.append({
+        "id": bill_id,
+        "uid": uid,
+        "vnd": vnd,
+        "image_file_id": None,
+        "status": "WAIT",
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
+    _save_json(BILL_FILE, bills)
+    return bill_id
+
+def approve_bill(bill_id: int):
+    bills = _load_json(BILL_FILE, [])
+    for b in bills:
+        if b["id"] == bill_id and b["status"] == "WAIT":
+            usdt = round(b["vnd"] / USDT_RATE, 2)
+            b["status"] = "DONE"
+            add_balance(b["uid"], usdt)
+            _save_json(BILL_FILE, bills)
+            return b["uid"], usdt
+    return None, 0.0
+
+# =============================
+# FORMAT PREDICTION
+# =============================
 def format_prediction(dai: str, preds: list[str]) -> str:
     name = DAI_MAP.get(dai, "?")
-
     if not preds or (len(preds) == 1 and "Chưa có dữ liệu" in preds[0]):
-        return (
-            f"🎯 {name}:\n"
-            f"⚠ Chưa đủ dữ liệu để dự đoán!\n\n"
-            f"👉 Nhập 18 số theo dạng:\n00 11 22 ..."
-        )
-
-    return (
-        f"🎯 Dự đoán – {name}\n\n"
-        f"{' '.join(preds)}"
-    )
+        return f"🎯 {name}\n⚠ Chưa đủ dữ liệu"
+    return f"🎯 Dự đoán – {name}\n\n{' '.join(preds)}"
 
 # =============================
-# ADD: PREDICTION WITH FEE
+# PREDICTION WITH FEE
 # =============================
-
 def get_prediction_with_fee(uid: int, dai: str) -> str:
     bal = get_balance(uid)
     if bal < ANALYZE_FEE:
         return (
-            "❌ Không đủ số dư\n"
+            f"❌ Không đủ số dư\n"
             f"💰 Cần: {ANALYZE_FEE} USDT\n"
             f"💼 Có: {bal:.2f} USDT\n\n"
             f"📞 Admin: @{ADMIN_USERNAME}"
@@ -124,13 +145,11 @@ def get_prediction_with_fee(uid: int, dai: str) -> str:
         format_prediction(dai, preds)
         + f"\n\n💰 Phí: {ANALYZE_FEE} USDT"
         + f"\n💼 Số dư: {get_balance(uid):.2f} USDT"
-        + f"\n📞 Admin: @{ADMIN_USERNAME}"
     )
 
 # =============================
-# AUTO DAILY (GIỮ NGUYÊN)
+# AUTO DAILY
 # =============================
-
 def auto_scheduler():
     while True:
         now = datetime.now()
@@ -151,18 +170,13 @@ def auto_scheduler():
         backup_data()
 
 # =============================
-# KEYBOARD (ADD NẠP TIỀN)
+# KEYBOARD
 # =============================
-
 def menu_keyboard():
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("🎯 Dự đoán", callback_data="pred_menu")],
             [InlineKeyboardButton("💳 Nạp tiền", callback_data="deposit")],
-            [
-                InlineKeyboardButton("📜 Lịch sử", callback_data="hist_menu"),
-                InlineKeyboardButton("📊 Thống kê", callback_data="stat_menu"),
-            ],
         ]
     )
 
@@ -178,7 +192,6 @@ def dai_keyboard(prefix):
 # =============================
 # HANDLERS
 # =============================
-
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 Bot sẵn sàng\n/menu")
 
@@ -205,9 +218,31 @@ async def menu_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if "_" in data:
         action, dai = data.split("_")
         if action == "pred":
-            msg = get_prediction_with_fee(uid, dai)
-            await q.edit_message_text(msg, reply_markup=menu_keyboard())
+            await q.edit_message_text(
+                get_prediction_with_fee(uid, dai),
+                reply_markup=menu_keyboard()
+            )
             return
+
+    # ===== ADMIN DUYỆT BILL =====
+    if data.startswith("approve_bill_"):
+        if uid not in ADMIN_IDS:
+            await q.answer("Không có quyền", show_alert=True)
+            return
+
+        bill_id = int(data.split("_")[-1])
+        u, usdt = approve_bill(bill_id)
+
+        if not u:
+            await q.edit_message_caption("❌ Bill không hợp lệ / đã duyệt")
+            return
+
+        await q.edit_message_caption(f"✅ BILL #{bill_id} ĐÃ DUYỆT\n+{usdt} USDT")
+        await ctx.bot.send_message(
+            u,
+            f"✅ Nạp tiền thành công\n+{usdt} USDT\n💼 Số dư: {get_balance(u):.2f} USDT"
+        )
+        return
 
 async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.message.from_user.id
@@ -222,85 +257,76 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Số tiền không hợp lệ")
             return
 
-        # tạo bill
         bill_id = create_bill(uid, vnd)
         ctx.user_data.clear()
-
-        # ===== GỬI QR CHO USER =====
-        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-        BANK_QR_PATH = os.path.join(BASE_DIR, "bank_qr.png")
+        ctx.user_data["wait_bill_image"] = bill_id
 
         caption = (
             f"🏦 THÔNG TIN CHUYỂN KHOẢN\n"
-            f"💰 Số tiền: {vnd:,} VND\n"
+            f"💰 {vnd:,} VND\n"
             f"🧾 Nội dung CK: ID {uid}\n\n"
-            f"📌 Sau khi chuyển khoản, vui lòng chờ admin duyệt bill\n"
-            f"📞 Admin: @{ADMIN_USERNAME}"
+            f"📸 Sau khi chuyển khoản, gửi ẢNH BILL tại đây"
         )
 
         try:
             with open(BANK_QR_PATH, "rb") as f:
-                await update.message.reply_photo(
-                    photo=f,
-                    caption=caption
-                )
-        except FileNotFoundError:
-            await update.message.reply_text(
-                caption + "\n\n⚠️ Không tìm thấy QR, liên hệ admin @x117277."
-            )
+                await update.message.reply_photo(photo=f, caption=caption)
+        except:
+            await update.message.reply_text(caption)
 
-        # ===== GỬI BILL CHO ADMIN =====
-        for aid in ADMIN_IDS:
-            await ctx.bot.send_message(
-                aid,
+async def handle_bill_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.message.from_user.id
+    bill_id = ctx.user_data.get("wait_bill_image")
+    if not bill_id:
+        return
+
+    photo = update.message.photo[-1]
+    file_id = photo.file_id
+
+    bills = _load_json(BILL_FILE, [])
+    bill = None
+    for b in bills:
+        if b["id"] == bill_id and b["uid"] == uid:
+            b["image_file_id"] = file_id
+            bill = b
+            break
+
+    _save_json(BILL_FILE, bills)
+    ctx.user_data.pop("wait_bill_image", None)
+
+    await update.message.reply_text("✅ Đã nhận ảnh bill, chờ admin duyệt.")
+
+    for aid in ADMIN_IDS:
+        await ctx.bot.send_photo(
+            aid,
+            photo=file_id,
+            caption=(
                 f"🧾 BILL #{bill_id}\n"
                 f"UID: {uid}\n"
-                f"💰 {vnd:,} VND\n"
-                f"/admin_ok {bill_id}"
+                f"💰 {bill['vnd']:,} VND"
+            ),
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton(
+                    "✅ DUYỆT BILL",
+                    callback_data=f"approve_bill_{bill_id}"
+                )]]
             )
-        return
-
-
-# =============================
-# ADMIN COMMAND
-# =============================
-
-async def admin_ok(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id not in ADMIN_IDS:
-        return
-    try:
-        bill_id = int(ctx.args[0])
-    except:
-        return
-
-    uid, usdt = approve_bill(bill_id)
-    if not uid:
-        await update.message.reply_text("❌ Bill không hợp lệ")
-        return
-
-    await update.message.reply_text(f"✅ Đã duyệt bill #{bill_id}")
-    await ctx.bot.send_message(
-        uid,
-        f"✅ Nạp thành công +{usdt} USDT\n"
-        f"💼 Số dư: {get_balance(uid):.2f} USDT"
-    )
+        )
 
 # =============================
 # APP INIT
 # =============================
-
 app = Application.builder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("menu", menu_cmd))
-app.add_handler(CommandHandler("admin_ok", admin_ok))
 app.add_handler(CallbackQueryHandler(menu_callback))
+app.add_handler(MessageHandler(filters.PHOTO, handle_bill_photo))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
 # =============================
 # MAIN
 # =============================
-
 def main():
     if AUTO_CHAT_ID:
         threading.Thread(target=auto_scheduler, daemon=True).start()
