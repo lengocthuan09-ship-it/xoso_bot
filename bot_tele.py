@@ -188,24 +188,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
 
     uid = user.id
-    username = user.username or "Không có username"
+    username = user.username or "không có"
     full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
 
     now_vn = datetime.now(VN_TZ).strftime("%d/%m/%Y %H:%M:%S")
 
-    # ====== GỬI CHO USER ======
-    await update.message.reply_text(
-        "👋 Chào mừng bạn đến với Bot Dự Đoán XSMN!\n\n"
-        f"🆔 UID: `{uid}`\n"
-        f"👤 Tên: {full_name}\n"
-        f"🔖 Username: @{username}\n"
-        f"🕒 Thời gian: {now_vn} (VN)\n\n"
-        "📌 Lưu lại UID để nạp tiền / liên hệ admin @x117277.\n"
-        "👉 Nhấn /menu để bắt đầu.",
-        parse_mode="Markdown"
-    )
+    # ===== GỬI CHO USER (KHÔNG DÙNG MARKDOWN) =====
+    try:
+        await update.message.reply_text(
+            "👋 Chào mừng bạn đến với Bot Dự Đoán XSMN!\n\n"
+            f"🆔 UID: {uid}\n"
+            f"👤 Tên: {full_name}\n"
+            f"🔖 Username: @{username}\n"
+            f"🕒 Thời gian: {now_vn} (VN)\n\n"
+            "📌 Lưu UID để nạp tiền / liên hệ admin @x117277.\n"
+            "👉 Nhấn /menu để bắt đầu."
+        )
+    except Exception as e:
+        print("Lỗi gửi start cho user:", e)
 
-    # ====== THÔNG BÁO ADMIN ======
+    # ===== THÔNG BÁO ADMIN =====
     admin_msg = (
         "🚨 USER START BOT\n\n"
         f"🆔 UID: {uid}\n"
@@ -221,7 +223,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=admin_msg
             )
         except Exception as e:
-            print(f"Lỗi gửi admin notify: {e}")
+            print("Lỗi gửi admin notify:", e)
 
 
 async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -463,6 +465,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
