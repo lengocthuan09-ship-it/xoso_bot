@@ -300,7 +300,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = q.from_user.id
 
     if data == "menu_main":
-        await q.edit_message_text("📌 Chọn chức năng:", reply_markup=menu_keyboard())
+        await q.edit_message_text(
+            "📌 Chọn chức năng:",
+            reply_markup=menu_keyboard()
+        )
         return
 
     if data == "balance":
@@ -322,20 +325,30 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     LAST_SELECTED_DAI[uid] = dai
 
     if action == "pred":
-        if get_balance(uid) < ANALYZE_FEE:
+        balance = get_balance(uid)
+
+        if balance < ANALYZE_FEE:
             await q.edit_message_text(
                 f"❌ Không đủ số dư để phân tích!\n\n"
                 f"💰 Phí: {ANALYZE_FEE} USDT\n"
+                f"💳 Số dư hiện tại: {balance} USDT\n\n"
                 f"👉 Liên hệ admin @{ADMIN_USERNAME}"
             )
             return
 
+        # ===== TRỪ TIỀN =====
         deduct_balance(uid, ANALYZE_FEE)
         log_tx(uid, -ANALYZE_FEE, "ANALYZE")
 
+        new_balance = get_balance(uid)
         preds = get_prediction_for_dai(dai)
+
+        # ===== TRẢ KẾT QUẢ + BÁO TRỪ TIỀN =====
         await q.edit_message_text(
-            format_prediction(dai, preds),
+            "💸 ĐÃ TRỪ PHÍ PHÂN TÍCH\n\n"
+            f"➖ Phí: {ANALYZE_FEE} USDT\n"
+            f"💳 Số dư còn lại: {new_balance} USDT\n\n"
+            + format_prediction(dai, preds),
             reply_markup=menu_keyboard(),
         )
         return
@@ -450,6 +463,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
