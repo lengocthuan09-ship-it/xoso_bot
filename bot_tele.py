@@ -200,7 +200,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👤 Tên: {full_name}\n"
         f"🔖 Username: @{username}\n"
         f"🕒 Thời gian: {now_vn} (VN)\n\n"
-        "📌 Lưu lại UID để nạp tiền / liên hệ admin.\n"
+        "📌 Lưu lại UID để nạp tiền / liên hệ admin @x117277.\n"
         "👉 Nhấn /menu để bắt đầu.",
         parse_mode="Markdown"
     )
@@ -431,6 +431,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
