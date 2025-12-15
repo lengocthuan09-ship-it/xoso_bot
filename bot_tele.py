@@ -259,15 +259,34 @@ async def addmoney_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Số tiền phải > 0.")
         return
 
+    # ===== CỘNG TIỀN =====
     add_balance(target_uid, amount)
     log_tx(target_uid, amount, f"ADMIN_ADD by {from_user.id}")
 
+    new_balance = get_balance(target_uid)
+
+    # ===== BÁO ADMIN =====
     await update.message.reply_text(
         f"✅ CỘNG TIỀN THÀNH CÔNG\n\n"
         f"👤 User ID: {target_uid}\n"
         f"💰 +{amount} USDT\n"
-        f"💳 Số dư mới: {get_balance(target_uid)} USDT"
+        f"💳 Số dư mới: {new_balance} USDT"
     )
+
+    # ===== THÔNG BÁO USER =====
+    try:
+        await context.bot.send_message(
+            chat_id=target_uid,
+            text=(
+                "💰 BẠN ĐÃ ĐƯỢC CỘNG TIỀN\n\n"
+                f"➕ Số tiền: {amount} USDT\n"
+                f"💳 Số dư hiện tại: {new_balance} USDT\n\n"
+                "👉 Vui lòng gõ /menu để sử dụng bot."
+            )
+        )
+    except Exception as e:
+        # Trường hợp user chưa từng chat với bot
+        print(f"Không gửi được notify cho user {target_uid}: {e}")
 
 
 # =============================
@@ -431,6 +450,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
