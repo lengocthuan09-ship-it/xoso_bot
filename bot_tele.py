@@ -18,11 +18,8 @@ from telegram.ext import (
 from xoso_core import (
     save_today_numbers,
     get_prediction_for_dai,
-    get_last_n_history,
-    stats_for_dai,
     backup_data,
     DAI_MAP,
-    clear_history,
 )
 
 # =============================
@@ -53,12 +50,15 @@ TX_LOG_FILE = "tx_logs.json"
 # =============================
 # BALANCE & LOG
 # =============================
-
 def _load_json(path: str) -> dict:
     if not os.path.exists(path):
         return {}
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
 
 def _save_json(path: str, data: dict):
     with open(path, "w", encoding="utf-8") as f:
@@ -129,11 +129,15 @@ def format_prediction(dai: str, preds: list[str]) -> str:
 def send_auto(text: str):
     if not AUTO_CHAT_ID:
         return
-    httpx.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        json={"chat_id": AUTO_CHAT_ID, "text": text},
-        timeout=30
-    )
+    try:
+        httpx.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            json={"chat_id": AUTO_CHAT_ID, "text": text},
+            timeout=30
+        )
+    except Exception as e:
+        print("Auto send error:", e)
+
 
 def auto_scheduler():
     while True:
@@ -152,19 +156,15 @@ def auto_scheduler():
         backup_data()
 
 # =============================
-# KEYBOARD UI (THÊM 💳 SỐ DƯ)
+# KEYBOARD UI 
 # =============================
 
 def menu_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🎯 Dự đoán", callback_data="pred_menu")],
-        [
-            InlineKeyboardButton("💳 Số dư", callback_data="balance"),
-            InlineKeyboardButton("📜 Lịch sử", callback_data="hist_menu"),
-        ],
-        [InlineKeyboardButton("📊 Thống kê", callback_data="stat_menu")],
-        [InlineKeyboardButton("🗑 Xóa", callback_data="del_menu")],
+        [InlineKeyboardButton("💳 Mua USDT", callback_data="buy_usdt")],
     ])
+
 
 def dai_select_keyboard(prefix: str):
     return InlineKeyboardMarkup([
@@ -197,6 +197,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 Tên: {full_name}\n"
             f"🔖 Username: @{username}\n"
             f"🕒 Thời gian: {now_vn} (VN)\n\n"
+            "================================\n"
             "📌 Lưu UID để nạp tiền / liên hệ admin @x117277.\n"
             "👉 Nhấn /menu để bắt đầu."
         )
@@ -290,34 +291,65 @@ async def numbers_input_handler(update: Update, context: ContextTypes.DEFAULT_TY
     text = update.message.text.strip()
     uid = update.message.from_user.id
 
-    # ❌ Không ở trạng thái chờ nhập số
     dai = context.user_data.get("waiting_dai")
     if not dai:
         return
 
     parts = text.split()
 
-    # ❌ Không đúng 18 số
     if len(parts) != 18 or not all(p.isdigit() and len(p) == 2 for p in parts):
         await update.message.reply_text(
             "⚠ Dữ liệu không hợp lệ!\n\n"
-            "📌 Vui lòng gửi ĐÚNG 18 số (2 chữ số, cách nhau bởi khoảng trắng)\n"
-            "vd: 00 11 22 33 ..."
+            "📌 Vui lòng gửi đúng 18 số (2 chữ số)\n"
+            "Ví dụ:\n"
+            "00 11 22 33 ..."
         )
         return
 
-    # ✅ LƯU DỮ LIỆU
+    # ===== KIỂM TRA SỐ DƯ =====
+    balance = get_balance(uid)
+    if balance < ANALYZE_FEE:
+        context.user_data.pop("waiting_dai", None)
+        await update.message.reply_text(
+            f"❌ Không đủ số dư để phân tích!\n\n"
+            f"💰 Phí: {ANALYZE_FEE} USDT\n"
+            f"💳 Số dư hiện tại: {balance} USDT\n\n"
+            f"👉 Liên hệ admin @{ADMIN_USERNAME}",
+            reply_markup=menu_keyboard()
+        )
+        return
+
+    # ===== TRỪ TIỀN =====
+    if not deduct_balance(uid, ANALYZE_FEE):
+        context.user_data.pop("waiting_dai", None)
+        await update.message.reply_text(
+            "❌ Giao dịch thất bại, vui lòng thử lại.",
+            reply_markup=menu_keyboard()
+        )
+        return
+
+    log_tx(uid, -ANALYZE_FEE, f"ANALYZE_{dai}")
+
+     
+
+    # ===== LƯU DỮ LIỆU =====
     save_today_numbers(dai, parts)
 
-    # 🔓 clear trạng thái chờ
+    # ===== LẤY KẾT QUẢ =====
+    preds = get_prediction_for_dai(dai)
+
     context.user_data.pop("waiting_dai", None)
 
     await update.message.reply_text(
-        f"✅ Đã lưu 18 số cho {DAI_MAP[dai]}!\n\n"
-        "👉 Bấm 🎯 Dự đoán để phân tích ngay."
+        "💸 ĐÃ TRỪ PHÍ PHÂN TÍCH\n"
+        f"➖ {ANALYZE_FEE} USDT\n"
+        f"💳 Số dư còn lại: {get_balance(uid)} USDT\n\n"
+        + format_prediction(dai, preds),
+        reply_markup=menu_keyboard()
     )
+
 # =============================
-# MENU CALLBACK (TRỪ PHÍ Ở ĐÂY)
+# MENU CALLBACK (ĐIỀU HƯỚNG UI)
 # =============================
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -325,7 +357,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
 
     data = q.data
-    uid = q.from_user.id
 
     # ===== MENU CHÍNH =====
     if data == "menu_main":
@@ -334,14 +365,16 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=menu_keyboard()
         )
         return
-
-    # ===== XEM SỐ DƯ =====
-    if data == "balance":
+    if data == "buy_usdt":
         await q.edit_message_text(
-            f"💳 Số dư hiện tại: {get_balance(uid)} USDT",
+            "💳 NẠP / MUA USDT\n\n"
+            "👉 Vui lòng liên hệ admin:\n"
+            f"@{ADMIN_USERNAME}",
             reply_markup=menu_keyboard()
         )
         return
+
+
 
     # ===== CHỌN ĐÀI (MENU) =====
     if data.endswith("_menu"):
@@ -357,103 +390,22 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         action, dai = data.split("_")
     except ValueError:
         return
-
     # ==================================================
-    # 🎯 DỰ ĐOÁN (CHỈ TRỪ TIỀN KHI ĐỦ DỮ LIỆU)
+    # 🎯 DỰ ĐOÁN → CHỈ YÊU CẦU NHẬP 18 CẶP
     # ==================================================
     if action == "pred":
         context.user_data["waiting_dai"] = dai
-        balance = get_balance(uid)
 
-        # 1️⃣ Kiểm tra số dư
-        if balance < ANALYZE_FEE:
-            await q.edit_message_text(
-                f"❌ Không đủ số dư để phân tích!\n\n"
-                f"💰 Phí: {ANALYZE_FEE} USDT\n"
-                f"💳 Số dư hiện tại: {balance} USDT\n\n"
-                f"👉 Liên hệ admin @{ADMIN_USERNAME}",
-                reply_markup=menu_keyboard()
-            )
-            return
-
-        # 2️⃣ LẤY DỮ LIỆU TRƯỚC (CHƯA TRỪ TIỀN)
-        preds = get_prediction_for_dai(dai)
-
-        # 3️⃣ CHƯA ĐỦ DỮ LIỆU → KHÔNG TRỪ TIỀN
-        if not preds or (len(preds) == 1 and "Chưa có dữ liệu" in preds[0]):
-            await q.edit_message_text(
-                format_prediction(dai, preds),
-                reply_markup=menu_keyboard()
-            )
-            return
-
-        # 4️⃣ ĐỦ DỮ LIỆU → TRỪ TIỀN
-        if not deduct_balance(uid, ANALYZE_FEE):
-            await q.edit_message_text(
-                "❌ Giao dịch thất bại, vui lòng thử lại.",
-                reply_markup=menu_keyboard()
-            )
-            return
-
-        log_tx(uid, -ANALYZE_FEE, f"ANALYZE_{dai}")
-        new_balance = get_balance(uid)
-
-        # 5️⃣ TRẢ KẾT QUẢ
         await q.edit_message_text(
-            "💸 ĐÃ TRỪ PHÍ PHÂN TÍCH\n"
-            f"➖ {ANALYZE_FEE} USDT\n"
-            f"💳 Số dư còn lại: {new_balance} USDT\n\n"
-            + format_prediction(dai, preds),
-            reply_markup=menu_keyboard()
+            f"✍️ Nhập 18 cặp số cho {DAI_MAP[dai]}\n\n"
+            "📌 Mỗi số gồm 2 chữ số, cách nhau bằng khoảng trắng\n"
+            "📌 Gửi đúng 18 số\n\n"
+            "Ví dụ:\n"
+            "00 11 22 33 44 55 66 77 88 99 01 02 03 04 05 06 07 08"
         )
         return
 
-    # ===== 📜 LỊCH SỬ =====
-    if action == "hist":
-        hist = get_last_n_history(dai, 7)
-        if not hist:
-            await q.edit_message_text(
-                f"📜 {DAI_MAP[dai]}: chưa có lịch sử!",
-                reply_markup=menu_keyboard()
-            )
-            return
 
-        msg = f"📜 Lịch sử – {DAI_MAP[dai]}:\n"
-        for h in hist:
-            msg += f"- {h['date']}: {' '.join(h['numbers'])}\n"
-
-        await q.edit_message_text(msg, reply_markup=menu_keyboard())
-        return
-
-    # ===== 📊 THỐNG KÊ =====
-    if action == "stat":
-        st = stats_for_dai(dai, 7)
-        if not st:
-            await q.edit_message_text(
-                f"📊 {DAI_MAP[dai]}: chưa đủ dữ liệu!",
-                reply_markup=menu_keyboard()
-            )
-            return
-
-        msg = (
-            f"📊 Thống kê – {DAI_MAP[dai]}\n"
-            f"- Tổng lượt về: {st['total_draws']}\n"
-            f"- Chẵn: {st['even']} | Lẻ: {st['odd']}\n"
-            f"- Lô nóng nhất: {st['hot']}\n"
-            f"- Lô gan nhất: {st['cold']}\n"
-        )
-
-        await q.edit_message_text(msg, reply_markup=menu_keyboard())
-        return
-
-    # ===== 🗑 XOÁ LỊCH SỬ =====
-    if action == "del":
-        clear_history(dai)
-        await q.edit_message_text(
-            f"🗑 Đã xóa lịch sử {DAI_MAP[dai]}!",
-            reply_markup=menu_keyboard()
-        )
-        return
 # =============================
 # APP
 # =============================
@@ -486,7 +438,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
 
