@@ -286,7 +286,36 @@ async def addmoney_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Trường hợp user chưa từng chat với bot
         print(f"Không gửi được notify cho user {target_uid}: {e}")
 
+async def numbers_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    uid = update.message.from_user.id
 
+    # ❌ Không ở trạng thái chờ nhập số
+    dai = context.user_data.get("waiting_dai")
+    if not dai:
+        return
+
+    parts = text.split()
+
+    # ❌ Không đúng 18 số
+    if len(parts) != 18 or not all(p.isdigit() and len(p) == 2 for p in parts):
+        await update.message.reply_text(
+            "⚠ Dữ liệu không hợp lệ!\n\n"
+            "📌 Vui lòng gửi ĐÚNG 18 số (2 chữ số, cách nhau bởi khoảng trắng)\n"
+            "vd: 00 11 22 33 ..."
+        )
+        return
+
+    # ✅ LƯU DỮ LIỆU
+    save_today_numbers(dai, parts)
+
+    # 🔓 clear trạng thái chờ
+    context.user_data.pop("waiting_dai", None)
+
+    await update.message.reply_text(
+        f"✅ Đã lưu 18 số cho {DAI_MAP[dai]}!\n\n"
+        "👉 Bấm 🎯 Dự đoán để phân tích ngay."
+    )
 # =============================
 # MENU CALLBACK (TRỪ PHÍ Ở ĐÂY)
 # =============================
@@ -333,6 +362,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 🎯 DỰ ĐOÁN (CHỈ TRỪ TIỀN KHI ĐỦ DỮ LIỆU)
     # ==================================================
     if action == "pred":
+        context.user_data["waiting_dai"] = dai
         balance = get_balance(uid)
 
         # 1️⃣ Kiểm tra số dư
@@ -430,11 +460,18 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 application = Application.builder().token(BOT_TOKEN).build()
 
+# ===== COMMAND =====
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("menu", menu_cmd))
 application.add_handler(CommandHandler("cong", addmoney_cmd))
-application.add_handler(CallbackQueryHandler(menu_callback))
 
+# ===== NHẬN 18 SỐ USER GỬI =====
+application.add_handler(
+    MessageHandler(filters.TEXT & ~filters.COMMAND, numbers_input_handler)
+)
+
+# ===== CALLBACK BUTTON =====
+application.add_handler(CallbackQueryHandler(menu_callback))
 
 def main():
     if AUTO_CHAT_ID:
@@ -449,6 +486,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
