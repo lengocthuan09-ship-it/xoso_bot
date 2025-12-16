@@ -165,8 +165,7 @@ def menu_keyboard():
         ],
         [
             InlineKeyboardButton("📊 Thống kê", callback_data="stat_menu"),
-            InlineKeyboardButton("📝 Nhập", callback_data="input_menu"),
-        ],
+            
         [InlineKeyboardButton("🗑 Xóa", callback_data="del_menu")],
     ])
 
@@ -465,6 +464,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
