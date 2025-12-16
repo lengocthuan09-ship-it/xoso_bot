@@ -290,6 +290,7 @@ async def addmoney_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =============================
 # MENU CALLBACK (TRỪ PHÍ Ở ĐÂY)
 # =============================
+
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -328,10 +329,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         return
 
-    # ===== 🎯 DỰ ĐOÁN (TRỪ TIỀN + TRẢ KQ TẠI ĐÂY) =====
+    # ==================================================
+    # 🎯 DỰ ĐOÁN (CHỈ TRỪ TIỀN KHI ĐỦ DỮ LIỆU)
+    # ==================================================
     if action == "pred":
         balance = get_balance(uid)
 
+        # 1️⃣ Kiểm tra số dư
         if balance < ANALYZE_FEE:
             await q.edit_message_text(
                 f"❌ Không đủ số dư để phân tích!\n\n"
@@ -342,7 +346,18 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # 🔥 TRỪ TIỀN DUY NHẤT TẠI ĐÂY
+        # 2️⃣ LẤY DỮ LIỆU TRƯỚC (CHƯA TRỪ TIỀN)
+        preds = get_prediction_for_dai(dai)
+
+        # 3️⃣ CHƯA ĐỦ DỮ LIỆU → KHÔNG TRỪ TIỀN
+        if not preds or (len(preds) == 1 and "Chưa có dữ liệu" in preds[0]):
+            await q.edit_message_text(
+                format_prediction(dai, preds),
+                reply_markup=menu_keyboard()
+            )
+            return
+
+        # 4️⃣ ĐỦ DỮ LIỆU → TRỪ TIỀN
         if not deduct_balance(uid, ANALYZE_FEE):
             await q.edit_message_text(
                 "❌ Giao dịch thất bại, vui lòng thử lại.",
@@ -353,8 +368,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log_tx(uid, -ANALYZE_FEE, f"ANALYZE_{dai}")
         new_balance = get_balance(uid)
 
-        preds = get_prediction_for_dai(dai)
-
+        # 5️⃣ TRẢ KẾT QUẢ
         await q.edit_message_text(
             "💸 ĐÃ TRỪ PHÍ PHÂN TÍCH\n"
             f"➖ {ANALYZE_FEE} USDT\n"
@@ -410,7 +424,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=menu_keyboard()
         )
         return
-
 # =============================
 # APP
 # =============================
@@ -436,6 +449,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
