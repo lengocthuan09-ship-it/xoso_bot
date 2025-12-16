@@ -101,7 +101,7 @@ def format_prediction(dai: str, preds: list[str]) -> str:
         return (
             f"🎯 {name}:\n"
             f"⚠ Chưa đủ dữ liệu để dự đoán!\n\n"
-            f"👉 Bạn cần nhập ít nhất 3 ngày gần nhất.\n"
+            f"👉 Vui lòng nhập đủ 18 số để phân tích.\n"
             f"📌 Gửi 18 số (2 chữ số, cách nhau bởi khoảng trắng):\n"
             f"vd: 00 11 22 ..."
         )
