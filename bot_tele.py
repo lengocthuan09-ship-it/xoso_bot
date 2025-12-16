@@ -298,6 +298,7 @@ async def numbers_input_handler(update: Update, context: ContextTypes.DEFAULT_TY
     parts = text.split()
 
     if len(parts) != 18 or not all(p.isdigit() and len(p) == 2 for p in parts):
+        context.user_data.pop("waiting_dai", None)
         await update.message.reply_text(
             "⚠ Dữ liệu không hợp lệ!\n\n"
             "📌 Vui lòng gửi đúng 18 số (2 chữ số)\n"
@@ -305,6 +306,7 @@ async def numbers_input_handler(update: Update, context: ContextTypes.DEFAULT_TY
             "00 11 22 33 ..."
         )
         return
+
 
     # ===== KIỂM TRA SỐ DƯ =====
     balance = get_balance(uid)
