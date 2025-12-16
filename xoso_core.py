@@ -73,7 +73,7 @@ def predict_12_numbers(day_numbers):
       - Luôn đảm bảo đúng 12 số
     """
 
-    if len(day_numbers) < 10:
+    if len(day_numbers) < 5:
         return ["Không đủ dữ liệu"]
 
     # ---------------------------------------
@@ -167,11 +167,24 @@ def get_latest_day(dai: str):
 
 
 def get_prediction_for_dai(dai: str):
-    latest = get_latest_day(dai)
-    if latest is None:
-        return ["Chưa có dữ liệu để dự đoán."]
-    return predict_12_numbers(latest["numbers"])
+    data = load_data()
+    key = f"dai{dai}"
+    days = data.get(key, [])
 
+    if not days:
+        return ["Chưa có dữ liệu để dự đoán."]
+
+    # 🔥 GỘP TOÀN BỘ SỐ (KHÔNG QUAN TÂM BAO NHIÊU NGÀY)
+    all_numbers = []
+    for day in days:
+        all_numbers.extend(day["numbers"])
+
+    # ❌ chưa đủ 18 số thì báo
+    if len(all_numbers) < 18:
+        return ["Chưa đủ dữ liệu"]
+
+    # ✅ đủ là dự đoán NGAY
+    return predict_12_numbers(all_numbers)
 
 # ============================
 #  LỊCH SỬ & THỐNG KÊ (GIỮ NGUYÊN)
@@ -247,3 +260,4 @@ def clear_history(dai: str):
     data[key] = []
     save_data(data)
     return True
+
