@@ -48,9 +48,7 @@ ANALYZE_FEE = 3.0
 BALANCE_FILE = "balances.json"
 TX_LOG_FILE = "tx_logs.json"
 
-WAITING_INPUT: dict[int, str] = {}
-WAITING_PAY: set[int] = set()
-LAST_SELECTED_DAI: dict[int, str] = {}
+
 
 # =============================
 # BALANCE & LOG
@@ -294,10 +292,10 @@ async def addmoney_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =============================
 # MENU CALLBACK (TRỪ PHÍ Ở ĐÂY)
 # =============================
-
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+
     data = q.data
     uid = q.from_user.id
 
@@ -309,6 +307,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # ===== XEM SỐ DƯ =====
     if data == "balance":
         await q.edit_message_text(
             f"💳 Số dư hiện tại: {get_balance(uid)} USDT",
@@ -316,20 +315,22 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== CHỌN ĐÀI =====
+    # ===== CHỌN ĐÀI (MENU) =====
     if data.endswith("_menu"):
         prefix = data.split("_")[0]
         await q.edit_message_text(
             "📌 Chọn đài:",
-            reply_markup=dai_select_keyboard(prefix),
+            reply_markup=dai_select_keyboard(prefix)
         )
         return
 
     # ===== ACTION + DAI =====
-    action, dai = data.split("_")
-    LAST_SELECTED_DAI[uid] = dai
+    try:
+        action, dai = data.split("_")
+    except ValueError:
+        return
 
-    # ===== DỰ ĐOÁN (KHÔNG TRỪ TIỀN Ở ĐÂY) =====
+    # ===== 🎯 DỰ ĐOÁN (TRỪ TIỀN + TRẢ KQ TẠI ĐÂY) =====
     if action == "pred":
         balance = get_balance(uid)
 
@@ -338,28 +339,40 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"❌ Không đủ số dư để phân tích!\n\n"
                 f"💰 Phí: {ANALYZE_FEE} USDT\n"
                 f"💳 Số dư hiện tại: {balance} USDT\n\n"
-                f"👉 Liên hệ admin @{ADMIN_USERNAME}"
+                f"👉 Liên hệ admin @{ADMIN_USERNAME}",
+                reply_markup=menu_keyboard()
             )
             return
 
-        # ✅ CHỈ ĐÁNH DẤU – CHƯA TRỪ TIỀN
-        WAITING_INPUT[uid] = dai
-        WAITING_PAY.add(uid)
+        # 🔥 TRỪ TIỀN DUY NHẤT TẠI ĐÂY
+        if not deduct_balance(uid, ANALYZE_FEE):
+            await q.edit_message_text(
+                "❌ Giao dịch thất bại, vui lòng thử lại.",
+                reply_markup=menu_keyboard()
+            )
+            return
+
+        log_tx(uid, -ANALYZE_FEE, f"ANALYZE_{dai}")
+        new_balance = get_balance(uid)
+
+        preds = get_prediction_for_dai(dai)
 
         await q.edit_message_text(
-            f"📝 Nhập 18 số cho {DAI_MAP[dai]}:\n"
-            f"vd: 00 11 22 ...\n\n"
-            f"💸 Phí sẽ trừ sau khi nhập hợp lệ: {ANALYZE_FEE} USDT"
+            "💸 ĐÃ TRỪ PHÍ PHÂN TÍCH\n"
+            f"➖ {ANALYZE_FEE} USDT\n"
+            f"💳 Số dư còn lại: {new_balance} USDT\n\n"
+            + format_prediction(dai, preds),
+            reply_markup=menu_keyboard()
         )
         return
 
-    # ===== LỊCH SỬ =====
+    # ===== 📜 LỊCH SỬ =====
     if action == "hist":
         hist = get_last_n_history(dai, 7)
         if not hist:
             await q.edit_message_text(
                 f"📜 {DAI_MAP[dai]}: chưa có lịch sử!",
-                reply_markup=menu_keyboard(),
+                reply_markup=menu_keyboard()
             )
             return
 
@@ -370,13 +383,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(msg, reply_markup=menu_keyboard())
         return
 
-    # ===== THỐNG KÊ =====
+    # ===== 📊 THỐNG KÊ =====
     if action == "stat":
         st = stats_for_dai(dai, 7)
         if not st:
             await q.edit_message_text(
                 f"📊 {DAI_MAP[dai]}: chưa đủ dữ liệu!",
-                reply_markup=menu_keyboard(),
+                reply_markup=menu_keyboard()
             )
             return
 
@@ -391,63 +404,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(msg, reply_markup=menu_keyboard())
         return
 
-    # ===== XOÁ LỊCH SỬ =====
+    # ===== 🗑 XOÁ LỊCH SỬ =====
     if action == "del":
         clear_history(dai)
         await q.edit_message_text(
             f"🗑 Đã xóa lịch sử {DAI_MAP[dai]}!",
-            reply_markup=menu_keyboard(),
+            reply_markup=menu_keyboard()
         )
         return
-
-# =============================
-# HANDLE INPUT 18 SỐ
-# =============================
-
-async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.message.from_user.id
-
-    # ❌ Không trong flow phân tích
-    if uid not in WAITING_INPUT or uid not in WAITING_PAY:
-        return
-
-    dai = WAITING_INPUT.pop(uid)
-    WAITING_PAY.remove(uid)
-
-    parts = update.message.text.strip().split()
-    if len(parts) != 18:
-        WAITING_INPUT[uid] = dai
-        WAITING_PAY.add(uid)
-        await update.message.reply_text("❌ Phải nhập đúng 18 số!")
-        return
-
-    nums = []
-    for x in parts:
-        if not x.isdigit():
-            WAITING_INPUT[uid] = dai
-            WAITING_PAY.add(uid)
-            await update.message.reply_text("❌ Sai định dạng số!")
-            return
-        nums.append(f"{int(x):02d}")
-
-    # 🔥 TRỪ TIỀN DUY NHẤT TẠI ĐÂY
-    if not deduct_balance(uid, ANALYZE_FEE):
-        await update.message.reply_text("❌ Số dư không đủ, giao dịch bị huỷ.")
-        return
-
-    log_tx(uid, -ANALYZE_FEE, "ANALYZE")
-    new_balance = get_balance(uid)
-
-    save_today_numbers(dai, nums)
-    preds = get_prediction_for_dai(dai)
-
-    await update.message.reply_text(
-        "💸 ĐÃ TRỪ PHÍ PHÂN TÍCH\n"
-        f"➖ {ANALYZE_FEE} USDT\n"
-        f"💳 Số dư còn lại: {new_balance} USDT\n\n"
-        + format_prediction(dai, preds),
-        reply_markup=menu_keyboard(),
-    )
 
 # =============================
 # APP
@@ -459,7 +423,7 @@ application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("menu", menu_cmd))
 application.add_handler(CommandHandler("cong", addmoney_cmd))
 application.add_handler(CallbackQueryHandler(menu_callback))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
+
 
 def main():
     if AUTO_CHAT_ID:
@@ -474,6 +438,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
