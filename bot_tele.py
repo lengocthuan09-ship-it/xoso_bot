@@ -162,9 +162,7 @@ def menu_keyboard():
             InlineKeyboardButton("💳 Số dư", callback_data="balance"),
             InlineKeyboardButton("📜 Lịch sử", callback_data="hist_menu"),
         ],
-        [
-            InlineKeyboardButton("📊 Thống kê", callback_data="stat_menu"),
-            
+        [InlineKeyboardButton("📊 Thống kê", callback_data="stat_menu")],
         [InlineKeyboardButton("🗑 Xóa", callback_data="del_menu")],
     ])
 
@@ -438,6 +436,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
