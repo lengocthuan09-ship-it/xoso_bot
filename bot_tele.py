@@ -49,6 +49,7 @@ BALANCE_FILE = "balances.json"
 TX_LOG_FILE = "tx_logs.json"
 
 WAITING_INPUT: dict[int, str] = {}
+WAITING_PAY: set[int] = set()
 LAST_SELECTED_DAI: dict[int, str] = {}
 
 # =============================
@@ -300,6 +301,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = q.data
     uid = q.from_user.id
 
+    # ===== MENU CHÍNH =====
     if data == "menu_main":
         await q.edit_message_text(
             "📌 Chọn chức năng:",
@@ -314,6 +316,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # ===== CHỌN ĐÀI =====
     if data.endswith("_menu"):
         prefix = data.split("_")[0]
         await q.edit_message_text(
@@ -322,9 +325,11 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # ===== ACTION + DAI =====
     action, dai = data.split("_")
     LAST_SELECTED_DAI[uid] = dai
 
+    # ===== DỰ ĐOÁN (KHÔNG TRỪ TIỀN Ở ĐÂY) =====
     if action == "pred":
         balance = get_balance(uid)
 
@@ -337,23 +342,18 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # ===== TRỪ TIỀN =====
-        deduct_balance(uid, ANALYZE_FEE)
-        log_tx(uid, -ANALYZE_FEE, "ANALYZE")
+        # ✅ CHỈ ĐÁNH DẤU – CHƯA TRỪ TIỀN
+        WAITING_INPUT[uid] = dai
+        WAITING_PAY.add(uid)
 
-        new_balance = get_balance(uid)
-        preds = get_prediction_for_dai(dai)
-
-        # ===== TRẢ KẾT QUẢ + BÁO TRỪ TIỀN =====
         await q.edit_message_text(
-            "💸 ĐÃ TRỪ PHÍ PHÂN TÍCH\n\n"
-            f"➖ Phí: {ANALYZE_FEE} USDT\n"
-            f"💳 Số dư còn lại: {new_balance} USDT\n\n"
-            + format_prediction(dai, preds),
-            reply_markup=menu_keyboard(),
+            f"📝 Nhập 18 số cho {DAI_MAP[dai]}:\n"
+            f"vd: 00 11 22 ...\n\n"
+            f"💸 Phí sẽ trừ sau khi nhập hợp lệ: {ANALYZE_FEE} USDT"
         )
         return
 
+    # ===== LỊCH SỬ =====
     if action == "hist":
         hist = get_last_n_history(dai, 7)
         if not hist:
@@ -370,6 +370,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(msg, reply_markup=menu_keyboard())
         return
 
+    # ===== THỐNG KÊ =====
     if action == "stat":
         st = stats_for_dai(dai, 7)
         if not st:
@@ -390,19 +391,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(msg, reply_markup=menu_keyboard())
         return
 
+    # ===== XOÁ LỊCH SỬ =====
     if action == "del":
         clear_history(dai)
         await q.edit_message_text(
             f"🗑 Đã xóa lịch sử {DAI_MAP[dai]}!",
             reply_markup=menu_keyboard(),
-        )
-        return
-
-    if action == "input":
-        WAITING_INPUT[uid] = dai
-        await q.edit_message_text(
-            f"📝 Nhập 18 số cho {DAI_MAP[dai]}:\n"
-            f"00 11 22 ..."
         )
         return
 
@@ -464,6 +458,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
