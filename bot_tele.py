@@ -406,29 +406,45 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.message.from_user.id
-    if uid not in WAITING_INPUT:
+
+    # ❌ Không trong flow phân tích
+    if uid not in WAITING_INPUT or uid not in WAITING_PAY:
         return
 
     dai = WAITING_INPUT.pop(uid)
+    WAITING_PAY.remove(uid)
 
     parts = update.message.text.strip().split()
     if len(parts) != 18:
         WAITING_INPUT[uid] = dai
+        WAITING_PAY.add(uid)
         await update.message.reply_text("❌ Phải nhập đúng 18 số!")
         return
 
     nums = []
     for x in parts:
         if not x.isdigit():
+            WAITING_INPUT[uid] = dai
+            WAITING_PAY.add(uid)
             await update.message.reply_text("❌ Sai định dạng số!")
             return
         nums.append(f"{int(x):02d}")
+
+    # 🔥 TRỪ TIỀN DUY NHẤT TẠI ĐÂY
+    if not deduct_balance(uid, ANALYZE_FEE):
+        await update.message.reply_text("❌ Số dư không đủ, giao dịch bị huỷ.")
+        return
+
+    log_tx(uid, -ANALYZE_FEE, "ANALYZE")
+    new_balance = get_balance(uid)
 
     save_today_numbers(dai, nums)
     preds = get_prediction_for_dai(dai)
 
     await update.message.reply_text(
-        f"📅 Đã lưu bộ số cho {DAI_MAP[dai]}!\n\n"
+        "💸 ĐÃ TRỪ PHÍ PHÂN TÍCH\n"
+        f"➖ {ANALYZE_FEE} USDT\n"
+        f"💳 Số dư còn lại: {new_balance} USDT\n\n"
         + format_prediction(dai, preds),
         reply_markup=menu_keyboard(),
     )
@@ -458,6 +474,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
