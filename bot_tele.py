@@ -16,9 +16,7 @@ from telegram.ext import (
 )
 
 from xoso_core import (
-    save_today_numbers,
-    get_prediction_for_dai,
-    backup_data,
+    get_prediction_from_user_input,
     DAI_MAP,
 )
 
@@ -122,38 +120,6 @@ def format_prediction(dai: str, preds: list[str]) -> str:
         f"💸 Phí phân tích: {ANALYZE_FEE} USDT"
     )
 
-# =============================
-# AUTO DAILY 16:35
-# =============================
-
-def send_auto(text: str):
-    if not AUTO_CHAT_ID:
-        return
-    try:
-        httpx.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            json={"chat_id": AUTO_CHAT_ID, "text": text},
-            timeout=30
-        )
-    except Exception as e:
-        print("Auto send error:", e)
-
-
-def auto_scheduler():
-    while True:
-        now = datetime.now()
-        run = now.replace(hour=16, minute=35, second=0, microsecond=0)
-        if now >= run:
-            run += timedelta(days=1)
-
-        time.sleep(max((run - now).total_seconds(), 1))
-
-        msg = "📅 Auto dự đoán:\n\n"
-        for dai in ["1", "2", "3"]:
-            msg += format_prediction(dai, get_prediction_for_dai(dai)) + "\n\n"
-
-        send_auto(msg)
-        backup_data()
 
 # =============================
 # KEYBOARD UI 
@@ -334,12 +300,9 @@ async def numbers_input_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
      
 
-    # ===== LƯU DỮ LIỆU =====
-    save_today_numbers(dai, parts)
-
     # ===== LẤY KẾT QUẢ =====
-    preds = get_prediction_for_dai(dai)
-
+    
+    preds = get_prediction_from_user_input(parts)
     context.user_data.pop("waiting_dai", None)
 
     await update.message.reply_text(
@@ -428,8 +391,6 @@ application.add_handler(
 application.add_handler(CallbackQueryHandler(menu_callback))
 
 def main():
-    if AUTO_CHAT_ID:
-        threading.Thread(target=auto_scheduler, daemon=True).start()
 
     application.run_webhook(
         listen="0.0.0.0",
@@ -440,15 +401,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
