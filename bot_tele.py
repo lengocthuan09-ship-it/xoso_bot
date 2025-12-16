@@ -448,7 +448,7 @@ application = Application.builder().token(BOT_TOKEN).build()
 
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("menu", menu_cmd))
-application.add_handler(CommandHandler("addmoney", addmoney_cmd))
+application.add_handler(CommandHandler("cong", addmoney_cmd))
 application.add_handler(CallbackQueryHandler(menu_callback))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
 
@@ -465,7 +465,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
 
